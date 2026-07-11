@@ -1,2 +1,0 @@
-#Allow vold to access /proc/rdtags
-allow vold rdtag_procfile:dir r_dir_perms;

@@ -1,5 +1,0 @@
-#rules related to crashmonitorsystemservice (runs inside system_server)
-
-# Access to /data/crashdata
-allow system_server crashdata_data_file:file r_file_perms;
-allow system_server crashdata_data_file:dir r_dir_perms;

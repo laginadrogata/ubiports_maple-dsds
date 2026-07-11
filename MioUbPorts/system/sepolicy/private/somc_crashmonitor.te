@@ -1,4 +1,0 @@
-# Allow access of /data/media/0/CrashDump/* and other crashdata_data_file's.
-
-allow system_app crashdata_data_file:dir { create_dir_perms };
-allow system_app crashdata_data_file:file { create_file_perms };
