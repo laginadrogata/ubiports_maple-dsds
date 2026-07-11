@@ -1,0 +1,118 @@
+type nativedumper_exec, exec_type, file_type;
+
+type nativedumper, domain, coredomain;
+
+#domain_auto_trans(init, nativedumper_exec, nativedumper)
+init_daemon_domain(nativedumper)
+
+# dmesg
+allow nativedumper kernel:system syslog_read;
+
+# collect /data/tombstone files
+allow nativedumper tombstone_data_file:dir rw_dir_perms;
+allow nativedumper tombstone_data_file:file create_file_perms;
+
+allow nativedumper nativedumper:fd { use };
+
+# write partial-tlcore to /data/crashdata
+allow nativedumper crashdata_data_file:dir create_dir_perms;
+allow nativedumper crashdata_data_file:file create_file_perms;
+
+allow nativedumper tmpfs:file { create_file_perms };
+allow nativedumper tmpfs:dir { create_dir_perms };
+allow nativedumper nativedumper_tmpfs:file { create_file_perms };
+allow nativedumper nativedumper_tmpfs:dir { create_dir_perms };
+
+# read from rdtags (tombstone info)
+allow nativedumper rdtag_procfile:dir rw_dir_perms;
+allow nativedumper rdtag_procfile:file rw_file_perms;
+
+# force reboot via sysrq-trigger
+allow nativedumper proc_sysrq:file {getattr w_file_perms};
+
+# /proc/[PID]/cmdline (incl. ppid=1 init)
+allow nativedumper { domain -kernel }:dir r_dir_perms;
+allow nativedumper { domain -kernel }:file r_file_perms;
+
+# /data/tombstones access causes dac_override fsetid dac_read_search.
+# POSIX tmpfile() call causes chown and dac_override.
+allow nativedumper self:capability { dac_override chown fsetid dac_read_search };
+#TODO: never allowed sys_ptrace
+
+# 'read' and 'getattr' violation takes place before main() is called.
+allow nativedumper kernel:fifo_file { ioctl read getattr };
+
+# Execute shell commands such as
+#    /system/bin/toolbox
+allow nativedumper system_file:file execute_no_trans;
+
+# [derived from ssr_dumper due to use of libdumperframework]
+allow nativedumper shell_exec:file { execute_no_trans read open execute getattr };
+
+# dumpsys / package info framework communication
+binder_call(nativedumper, system_server)
+
+#not_full_treble(`
+    binder_use(nativedumper)
+#')
+#full_treble_only(`
+#    vndbinder_use(nativedumper)
+#')
+
+allow system_server nativedumper:fifo_file { write };
+allow system_server nativedumper:fd { use };
+
+#allow this service to connect
+allow nativedumper package_service:service_manager { find };
+
+allow nativedumper proc:file r_file_perms;
+allow nativedumper toolbox_exec:file rx_file_perms;
+
+allow nativedumper kernel:fd { use };
+
+allow nativedumper rootfs:dir r_dir_perms;
+
+#to get properies
+# Diag: excluding permission for firstboot_prop, serialno_prop due to neverallow policy
+allow nativedumper { property_type -firstboot_prop -serialno_prop }:file r_file_perms;
+
+#Avoid violation message from nativedumper for accessing system property
+dontaudit nativedumper serialno_prop:file r_file_perms;
+dontaudit nativedumper firstboot_prop:file r_file_perms;
+
+#allow nativedumper to add logs
+allow nativedumper kmsg_device:chr_file { read open };
+allow nativedumper logd_socket:sock_file write;
+allow nativedumper somc_extralogs_data_file:dir { write getattr read remove_name open add_name create search };
+allow nativedumper somc_extralogs_data_file:file { write getattr read create unlink open };
+
+userdebug_or_eng(`
+    #capabillities: fowner/fsetid: libdumperframework (create partial tlcore with proper userid)
+    # dac_override: creating full coredump
+    allow nativedumper self:capability { sys_nice fowner };
+
+    # write coredumps to external storage (like sdcard)
+    allow nativedumper sdcard_type:dir { create_dir_perms };
+    allow nativedumper sdcard_type:file { create_file_perms };
+
+    #read adb-logs
+    read_logd(nativedumper)
+
+    # Allow access to external storage; we have several visible mount points under /storage
+    # and symlinks to primary storage at places like /storage/sdcard0 and /mnt/user/0/primary
+    allow nativedumper storage_file:dir r_dir_perms;
+    allow nativedumper storage_file:lnk_file r_file_perms;
+    allow nativedumper mnt_user_file:dir r_dir_perms;
+    allow nativedumper mnt_user_file:lnk_file r_file_perms;
+
+    # Allow nativedumper to access /data/media folder
+    allow nativedumper media_rw_data_file:dir { create_dir_perms relabelfrom };
+    allow nativedumper media_rw_data_file:file create_file_perms;
+
+    # To set proper security labels & permissions for tlcore
+    allow nativedumper crashdata_data_file:dir relabelto;
+
+    # Allow nativedumper to access rootfs context like selinux_version and file_contexts.bin
+    allow nativedumper rootfs:file { read getattr open };
+    allow nativedumper file_contexts_file:file { read getattr open };
+')

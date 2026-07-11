@@ -1,0 +1,9 @@
+type ext_telephony_service_server, service_manager_type;
+
+type ext_telephony_service_impl, coredomain;
+binder_use(ext_telephony_service_impl);
+
+allow untrusted_app ext_telephony_service_server:service_manager find;
+allow priv_app ext_telephony_service_server:service_manager find;
+allow system_server ext_telephony_service_server:service_manager find;
+allow radio ext_telephony_service_server:service_manager { add find };

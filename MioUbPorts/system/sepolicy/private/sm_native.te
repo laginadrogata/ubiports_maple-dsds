@@ -1,0 +1,9 @@
+type service_menu_service, domain, coredomain;
+type service_menu_service_exec, exec_type, file_type;
+
+init_daemon_domain(service_menu_service)
+
+set_prop(service_menu_service, wifi_prop)
+allow service_menu_service self:udp_socket { create ioctl };
+allowxperm service_menu_service self:udp_socket ioctl priv_sock_ioctls;
+allow service_menu_service self:capability {net_admin net_raw};

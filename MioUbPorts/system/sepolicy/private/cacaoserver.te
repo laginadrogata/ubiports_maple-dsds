@@ -1,0 +1,3 @@
+typeattribute cacaoserver coredomain;
+
+init_daemon_domain(cacaoserver)

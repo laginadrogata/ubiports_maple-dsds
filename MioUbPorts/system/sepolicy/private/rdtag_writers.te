@@ -1,0 +1,5 @@
+# ActivityManagerService writes to rdtag prior to force-crash.
+allow system_server rdtag_procfile:file rw_file_perms;
+
+# Allow system-server CrashMonitorSystemServer to also read the dir (to clear rdtags)
+allow system_server rdtag_procfile:dir r_dir_perms;

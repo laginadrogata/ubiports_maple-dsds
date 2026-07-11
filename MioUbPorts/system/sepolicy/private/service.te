@@ -1,0 +1,3 @@
+#not_full_treble(`
+    type crashmonitor_service, service_manager_type;
+#')

@@ -1,0 +1,11 @@
+alloc,10,ION_SPSS_HEAP_ID,0,0x100000,1MB,false,true,true
+alloc,10,ION_SPSS_HEAP_ID,ION_FLAG_CACHED,0x100000,1MB,false,true,true
+
+alloc,10,ION_SPSS_HEAP_ID,0,0x300000,3MB,false,true,true
+alloc,10,ION_SPSS_HEAP_ID,ION_FLAG_CACHED,0x300000,3MB,false,true,true
+
+alloc,10,ION_SPSS_HEAP_ID,0,0x500000,5MB,false,true,true
+alloc,10,ION_SPSS_HEAP_ID,ION_FLAG_CACHED,0x500000,5MB,false,true,true
+
+alloc,10,ION_SPSS_HEAP_ID,0,0x800000,8MB,false,true,true
+alloc,10,ION_SPSS_HEAP_ID,ION_FLAG_CACHED,0x800000,8MB,false,true,true
