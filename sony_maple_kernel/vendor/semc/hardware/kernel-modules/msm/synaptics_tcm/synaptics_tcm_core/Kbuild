@@ -1,2 +1,0 @@
-obj-m := synaptics_tcm_core.o
-
