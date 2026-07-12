@@ -162,6 +162,11 @@ int pwm_config_us(struct pwm_device *pwm,
 		int duty_us, int period_us);
 
 /*
+ * synchronized enable of multiple pwm instances
+ */
+int pwm_enable_synchronized(struct pwm_device **pwms, size_t num);
+
+/*
  * lut_config: LUT config
  * @hi_index: LUT high index for ramp
  * @lo_index: LUT low index for ramp
@@ -218,6 +223,11 @@ static inline int pwm_lut_config(struct pwm_device *pwm, int period_us,
 
 static inline int pwm_config_us(struct pwm_device *pwm,
 		int duty_us, int period_us)
+{
+	return -EINVAL;
+}
+
+static inline int pwm_enable_synchronized(struct pwm_device **pwms, size_t num)
 {
 	return -EINVAL;
 }

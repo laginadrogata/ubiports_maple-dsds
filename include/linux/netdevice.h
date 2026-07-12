@@ -60,6 +60,7 @@ struct wireless_dev;
 /* 802.15.4 specific */
 struct wpan_dev;
 struct mpls_dev;
+struct bpf_prog;
 
 void netdev_set_default_ethtool_ops(struct net_device *dev,
 				    const struct ethtool_ops *ops);
@@ -777,6 +778,34 @@ static inline bool netdev_phys_item_id_same(struct netdev_phys_item_id *a,
 typedef u16 (*select_queue_fallback_t)(struct net_device *dev,
 				       struct sk_buff *skb);
 
+/* These structures hold the attributes of xdp state that are being passed
+ * to the netdevice through the xdp op.
+ */
+enum xdp_netdev_command {
+	/* Set or clear a bpf program used in the earliest stages of packet
+	 * rx. The prog will have been loaded as BPF_PROG_TYPE_XDP. The callee
+	 * is responsible for calling bpf_prog_put on any old progs that are
+	 * stored. In case of error, the callee need not release the new prog
+	 * reference, but on success it takes ownership and must bpf_prog_put
+	 * when it is no longer used.
+	 */
+	XDP_SETUP_PROG,
+	/* Check if a bpf program is set on the device.  The callee should
+	 * return true if a program is currently attached and running.
+	 */
+	XDP_QUERY_PROG,
+};
+
+struct netdev_xdp {
+	enum xdp_netdev_command command;
+	union {
+		/* XDP_SETUP_PROG */
+		struct bpf_prog *prog;
+		/* XDP_QUERY_PROG */
+		bool prog_attached;
+	};
+};
+
 /*
  * This structure defines the management hooks for network devices.
  * The following hooks can be defined; unless noted otherwise, they are
@@ -1059,6 +1088,15 @@ typedef u16 (*select_queue_fallback_t)(struct net_device *dev,
  *	This function is used to get egress tunnel information for given skb.
  *	This is useful for retrieving outer tunnel header parameters while
  *	sampling packet.
+ * void (*ndo_set_rx_headroom)(struct net_device *dev, int needed_headroom);
+ *	This function is used to specify the headroom that the skb must
+ *	consider when allocation skb during packet reception. Setting
+ *	appropriate rx headroom value allows avoiding skb head copy on
+ *	forward. Setting a negative value reset the rx headroom to the
+ *	default value.
+ * int (*ndo_xdp)(struct net_device *dev, struct netdev_xdp *xdp);
+ *	This function is used to set or query state related to XDP on the
+ *	netdevice. See definition of enum xdp_netdev_command for details.
  *
  */
 struct net_device_ops {
@@ -1236,6 +1274,10 @@ struct net_device_ops {
 							 bool proto_down);
 	int			(*ndo_fill_metadata_dst)(struct net_device *dev,
 						       struct sk_buff *skb);
+	void			(*ndo_set_rx_headroom)(struct net_device *dev,
+						       int needed_headroom);
+	int			(*ndo_xdp)(struct net_device *dev,
+					   struct netdev_xdp *xdp);
 };
 
 /**
@@ -1271,6 +1313,10 @@ struct net_device_ops {
  * @IFF_NO_QUEUE: device can run without qdisc attached
  * @IFF_OPENVSWITCH: device is a Open vSwitch master
  * @IFF_L3MDEV_SLAVE: device is enslaved to an L3 master device
+ * @IFF_TEAM: device is a team device
+ * @IFF_RXFH_CONFIGURED: device has had Rx Flow indirection table configured
+ * @IFF_PHONY_HEADROOM: the headroom value is controlled by an external
+ *	entity (i.e. the master device for bridged veth)
  */
 enum netdev_priv_flags {
 	IFF_802_1Q_VLAN			= 1<<0,
@@ -1297,6 +1343,9 @@ enum netdev_priv_flags {
 	IFF_NO_QUEUE			= 1<<21,
 	IFF_OPENVSWITCH			= 1<<22,
 	IFF_L3MDEV_SLAVE		= 1<<23,
+	IFF_TEAM			= 1<<24,
+	IFF_RXFH_CONFIGURED		= 1<<25,
+	IFF_PHONY_HEADROOM		= 1<<26,
 };
 
 #define IFF_802_1Q_VLAN			IFF_802_1Q_VLAN
@@ -1323,6 +1372,8 @@ enum netdev_priv_flags {
 #define IFF_NO_QUEUE			IFF_NO_QUEUE
 #define IFF_OPENVSWITCH			IFF_OPENVSWITCH
 #define IFF_L3MDEV_SLAVE		IFF_L3MDEV_SLAVE
+#define IFF_TEAM			IFF_TEAM
+#define IFF_RXFH_CONFIGURED		IFF_RXFH_CONFIGURED
 
 /**
  *	struct net_device - The DEVICE structure.
@@ -1617,6 +1668,11 @@ struct net_device {
 	unsigned char		if_port;
 	unsigned char		dma;
 
+	/* Note : dev->mtu is often read without holding a lock.
+	 * Writers usually hold RTNL.
+	 * It is recommended to use READ_ONCE() to annotate the reads,
+	 * and to use WRITE_ONCE() to annotate the writes.
+	 */
 	unsigned int		mtu;
 	unsigned short		type;
 	unsigned short		hard_header_len;
@@ -1885,6 +1941,26 @@ struct netdev_queue *netdev_pick_tx(struct net_device *dev,
 				    struct sk_buff *skb,
 				    void *accel_priv);
 
+/* returns the headroom that the master device needs to take in account
+ * when forwarding to this dev
+ */
+static inline unsigned netdev_get_fwd_headroom(struct net_device *dev)
+{
+	return dev->priv_flags & IFF_PHONY_HEADROOM ? 0 : dev->needed_headroom;
+}
+
+static inline void netdev_set_rx_headroom(struct net_device *dev, int new_hr)
+{
+	if (dev->netdev_ops->ndo_set_rx_headroom)
+		dev->netdev_ops->ndo_set_rx_headroom(dev, new_hr);
+}
+
+/* set the device rx headroom to the dev's default */
+static inline void netdev_reset_rx_headroom(struct net_device *dev)
+{
+	netdev_set_rx_headroom(dev, -1);
+}
+
 /*
  * Net namespace inlines
  */
@@ -2008,7 +2084,10 @@ struct napi_gro_cb {
 	/* Number of gro_receive callbacks this packet already went through */
 	u8 recursion_counter:4;
 
-	/* 3 bit hole */
+	/* Used in GRE, set in fou/gue_gro_receive */
+	u8	is_fou:1;
+
+	/* 2 bit hole */
 
 	/* used to support CHECKSUM_COMPLETE for tunneling protocols */
 	__wsum	csum;
@@ -2047,6 +2126,7 @@ struct packet_type {
 					 struct net_device *);
 	bool			(*id_match)(struct packet_type *ptype,
 					    struct sock *sk);
+	struct net		*af_packet_net;
 	void			*af_packet_priv;
 	struct list_head	list;
 };
@@ -2166,6 +2246,13 @@ int unregister_netdevice_notifier(struct notifier_block *nb);
 
 struct netdev_notifier_info {
 	struct net_device *dev;
+};
+
+struct netdev_notifier_info_ext {
+	struct netdev_notifier_info info; /* must be first */
+	union {
+		u32 mtu;
+	} ext;
 };
 
 struct netdev_notifier_change_info {
@@ -2289,6 +2376,8 @@ void synchronize_net(void);
 int init_dummy_netdev(struct net_device *dev);
 
 DECLARE_PER_CPU(int, xmit_recursion);
+#define XMIT_RECURSION_LIMIT	10
+
 static inline int dev_recursion_level(void)
 {
 	return this_cpu_read(xmit_recursion);
@@ -3113,12 +3202,28 @@ int dev_get_phys_port_id(struct net_device *dev,
 int dev_get_phys_port_name(struct net_device *dev,
 			   char *name, size_t len);
 int dev_change_proto_down(struct net_device *dev, bool proto_down);
+int dev_change_xdp_fd(struct net_device *dev, int fd);
 struct sk_buff *validate_xmit_skb_list(struct sk_buff *skb, struct net_device *dev);
 struct sk_buff *dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 				    struct netdev_queue *txq, int *ret);
 int __dev_forward_skb(struct net_device *dev, struct sk_buff *skb);
 int dev_forward_skb(struct net_device *dev, struct sk_buff *skb);
 bool is_skb_forwardable(struct net_device *dev, struct sk_buff *skb);
+
+static __always_inline int ____dev_forward_skb(struct net_device *dev,
+					       struct sk_buff *skb)
+{
+	if (skb_orphan_frags(skb, GFP_ATOMIC) ||
+	    unlikely(!is_skb_forwardable(dev, skb))) {
+		atomic_long_inc(&dev->rx_dropped);
+		kfree_skb(skb);
+		return NET_RX_DROP;
+	}
+
+	skb_scrub_packet(skb, true);
+	skb->priority = 0;
+	return 0;
+}
 
 extern int		netdev_budget;
 
@@ -3295,7 +3400,7 @@ static inline u32 netif_msg_init(int debug_value, int default_msg_enable_bits)
 	if (debug_value == 0)	/* no output */
 		return 0;
 	/* set low N bits */
-	return (1 << debug_value) - 1;
+	return (1U << debug_value) - 1;
 }
 
 static inline void __netif_tx_lock(struct netdev_queue *txq, int cpu)
@@ -3417,6 +3522,7 @@ static inline void netif_tx_disable(struct net_device *dev)
 
 	local_bh_disable();
 	cpu = smp_processor_id();
+	spin_lock(&dev->tx_global_lock);
 	for (i = 0; i < dev->num_tx_queues; i++) {
 		struct netdev_queue *txq = netdev_get_tx_queue(dev, i);
 
@@ -3424,6 +3530,7 @@ static inline void netif_tx_disable(struct net_device *dev)
 		netif_tx_stop_queue(txq);
 		__netif_tx_unlock(txq);
 	}
+	spin_unlock(&dev->tx_global_lock);
 	local_bh_enable();
 }
 
@@ -3614,7 +3721,6 @@ void netdev_stats_to_stats64(struct rtnl_link_stats64 *stats64,
 extern int		netdev_max_backlog;
 extern int		netdev_tstamp_prequeue;
 extern int		weight_p;
-extern int		bpf_jit_enable;
 
 bool netdev_has_upper_dev(struct net_device *dev, struct net_device *upper_dev);
 struct net_device *netdev_upper_get_next_dev_rcu(struct net_device *dev,
@@ -3683,7 +3789,7 @@ extern u8 netdev_rss_key[NETDEV_RSS_KEY_LEN];
 void netdev_rss_key_fill(void *buffer, size_t len);
 
 int dev_get_nest_level(struct net_device *dev,
-		       bool (*type_check)(struct net_device *dev));
+		       bool (*type_check)(const struct net_device *dev));
 int skb_checksum_help(struct sk_buff *skb);
 struct sk_buff *__skb_gso_segment(struct sk_buff *skb,
 				  netdev_features_t features, bool tx_path);
@@ -3880,32 +3986,32 @@ static inline void skb_gso_error_unwind(struct sk_buff *skb, __be16 protocol,
 	skb->mac_len = mac_len;
 }
 
-static inline bool netif_is_macvlan(struct net_device *dev)
+static inline bool netif_is_macvlan(const struct net_device *dev)
 {
 	return dev->priv_flags & IFF_MACVLAN;
 }
 
-static inline bool netif_is_macvlan_port(struct net_device *dev)
+static inline bool netif_is_macvlan_port(const struct net_device *dev)
 {
 	return dev->priv_flags & IFF_MACVLAN_PORT;
 }
 
-static inline bool netif_is_ipvlan(struct net_device *dev)
+static inline bool netif_is_ipvlan(const struct net_device *dev)
 {
 	return dev->priv_flags & IFF_IPVLAN_SLAVE;
 }
 
-static inline bool netif_is_ipvlan_port(struct net_device *dev)
+static inline bool netif_is_ipvlan_port(const struct net_device *dev)
 {
 	return dev->priv_flags & IFF_IPVLAN_MASTER;
 }
 
-static inline bool netif_is_bond_master(struct net_device *dev)
+static inline bool netif_is_bond_master(const struct net_device *dev)
 {
 	return dev->flags & IFF_MASTER && dev->priv_flags & IFF_BONDING;
 }
 
-static inline bool netif_is_bond_slave(struct net_device *dev)
+static inline bool netif_is_bond_slave(const struct net_device *dev)
 {
 	return dev->flags & IFF_SLAVE && dev->priv_flags & IFF_BONDING;
 }
@@ -3938,6 +4044,31 @@ static inline bool netif_is_bridge_port(const struct net_device *dev)
 static inline bool netif_is_ovs_master(const struct net_device *dev)
 {
 	return dev->priv_flags & IFF_OPENVSWITCH;
+}
+
+static inline bool netif_is_team_master(const struct net_device *dev)
+{
+	return dev->priv_flags & IFF_TEAM;
+}
+
+static inline bool netif_is_team_port(const struct net_device *dev)
+{
+	return dev->priv_flags & IFF_TEAM_PORT;
+}
+
+static inline bool netif_is_lag_master(const struct net_device *dev)
+{
+	return netif_is_bond_master(dev) || netif_is_team_master(dev);
+}
+
+static inline bool netif_is_lag_port(const struct net_device *dev)
+{
+	return netif_is_bond_slave(dev) || netif_is_team_port(dev);
+}
+
+static inline bool netif_is_rxfh_configured(const struct net_device *dev)
+{
+	return dev->priv_flags & IFF_RXFH_CONFIGURED;
 }
 
 /* This device needs to keep skb dst for qdisc enqueue or ndo_start_xmit() */

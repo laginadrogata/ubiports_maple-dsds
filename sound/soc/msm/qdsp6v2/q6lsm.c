@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2013-2018, Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2020, Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -127,7 +128,8 @@ static int q6lsm_callback(struct apr_client_data *data, void *priv)
 	if (data->opcode == LSM_DATA_EVENT_READ_DONE) {
 		struct lsm_cmd_read_done read_done;
 		token = data->token;
-		if (data->payload_size > sizeof(read_done)) {
+		if (data->payload_size > sizeof(read_done) ||
+				data->payload_size < 6 * sizeof(payload[0])) {
 			pr_err("%s: read done error payload size %d expected size %zd\n",
 				__func__, data->payload_size,
 				sizeof(read_done));
@@ -145,6 +147,7 @@ static int q6lsm_callback(struct apr_client_data *data, void *priv)
 		if (client->cb)
 			client->cb(data->opcode, data->token,
 					(void *)&read_done,
+					sizeof(read_done),
 					client->priv);
 		return 0;
 	} else if (data->opcode == APR_BASIC_RSP_RESULT) {
@@ -171,6 +174,11 @@ static int q6lsm_callback(struct apr_client_data *data, void *priv)
 					__func__, token, client->session);
 				return -EINVAL;
 			}
+			if (data->payload_size < 2 * sizeof(payload[0])) {
+				pr_err("%s: payload has invalid size[%d]\n",
+					__func__, data->payload_size);
+				return -EINVAL;
+			}
 			client->cmd_err_code = payload[1];
 			if (client->cmd_err_code)
 				pr_err("%s: cmd 0x%x failed status %d\n",
@@ -191,7 +199,7 @@ static int q6lsm_callback(struct apr_client_data *data, void *priv)
 
 	if (client->cb)
 		client->cb(data->opcode, data->token, data->payload,
-			   client->priv);
+				data->payload_size, client->priv);
 
 	return 0;
 }
@@ -219,7 +227,7 @@ static void q6lsm_session_free(struct lsm_client *client)
 	unsigned long flags;
 	pr_debug("%s: Freeing session ID %d\n", __func__, client->session);
 	spin_lock_irqsave(&lsm_session_lock, flags);
-	lsm_session[client->session] = LSM_INVALID_SESSION_ID;
+	lsm_session[client->session] = NULL;
 	spin_unlock_irqrestore(&lsm_session_lock, flags);
 	client->session = LSM_INVALID_SESSION_ID;
 }
@@ -332,6 +340,10 @@ static int q6lsm_apr_send_pkt(struct lsm_client *client, void *handle,
 	struct apr_hdr *msg_hdr = (struct apr_hdr *) data;
 
 	pr_debug("%s: enter wait %d\n", __func__, wait);
+	if (mmap_handle_p) {
+		pr_err("%s: Invalid mmap_handle\n", __func__);
+		return -EINVAL;
+	}
 	if (wait)
 		mutex_lock(&lsm_common.apr_lock);
 	if (mmap_p) {
@@ -375,6 +387,7 @@ static int q6lsm_apr_send_pkt(struct lsm_client *client, void *handle,
 	if (wait)
 		mutex_unlock(&lsm_common.apr_lock);
 
+	mmap_handle_p = NULL;
 	pr_debug("%s: leave ret %d\n", __func__, ret);
 	return ret;
 }
@@ -1365,6 +1378,8 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 		pr_debug("%s: SSR event received 0x%x, event 0x%x,\n"
 			 "proc 0x%x SID 0x%x\n", __func__, data->opcode,
 			 data->reset_event, data->reset_proc, sid);
+		if (sid < LSM_MIN_SESSION_ID || sid > LSM_MAX_SESSION_ID)
+			pr_err("%s: Invalid session %d\n", __func__, sid);
 		lsm_common.common_client[sid].lsm_cal_phy_addr = 0;
 		cal_utils_clear_cal_block_q6maps(LSM_MAX_CAL_IDX,
 			lsm_common.cal_data);
@@ -1387,7 +1402,8 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 	case LSM_SESSION_CMDRSP_SHARED_MEM_MAP_REGIONS:
 		if (atomic_read(&client->cmd_state) == CMD_STATE_WAIT_RESP) {
 			spin_lock_irqsave(&mmap_lock, flags);
-			*mmap_handle_p = command;
+			if (mmap_handle_p)
+				*mmap_handle_p = command;
 			/* spin_unlock_irqrestore implies barrier */
 			spin_unlock_irqrestore(&mmap_lock, flags);
 			atomic_set(&client->cmd_state, CMD_STATE_CLEARED);
@@ -1426,7 +1442,8 @@ static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 	}
 	if (client->cb)
 		client->cb(data->opcode, data->token,
-			   data->payload, client->priv);
+			   data->payload, data->payload_size,
+			   client->priv);
 	return 0;
 }
 

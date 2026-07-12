@@ -161,6 +161,7 @@ enum ufs_desc_max_size {
 	QUERY_DESC_STRING_MAX_SIZE		= 0xFE,
 	QUERY_DESC_GEOMETRY_MAZ_SIZE		= 0x44,
 	QUERY_DESC_POWER_MAX_SIZE		= 0x62,
+	QUERY_DESC_HEALTH_MAX_SIZE		= 0x25,
 	QUERY_DESC_DEVICE_HEALTH_MAX_SIZE	= 0x25,
 	QUERY_DESC_RFU_MAX_SIZE			= 0x00,
 };
@@ -223,6 +224,16 @@ enum device_desc_param {
 	DEVICE_DESC_PARAM_PSA_STATE_TIMEOUT	= 0x29,
 	DEVICE_DESC_PARAM_PRODUCT_REVISION	= 0x2A,
 };
+
+/* Health descriptor parameters offsets in bytes*/
+enum health_desc_param {
+	HEALTH_DESC_PARAM_LEN			= 0x0,
+	HEALTH_DESC_PARAM_TYPE			= 0x1,
+	HEALTH_DESC_PARAM_EOL_INFO		= 0x2,
+	HEALTH_DESC_PARAM_LIFE_TIME_EST_A	= 0x3,
+	HEALTH_DESC_PARAM_LIFE_TIME_EST_B	= 0x4,
+};
+
 /*
  * Logical Unit Write Protect
  * 00h: LU not write protected

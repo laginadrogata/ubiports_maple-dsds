@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,8 +22,11 @@
 #include "diagfwd_bridge.h"
 #ifdef CONFIG_USB_QCOM_DIAG_BRIDGE
 #include "diagfwd_hsic.h"
+#include "diagfwd_sdio.h"
 #endif
+#ifdef CONFIG_MSM_MHI
 #include "diagfwd_mhi.h"
+#endif
 #include "diag_dci.h"
 
 #ifndef CONFIG_USB_QCOM_DIAG_BRIDGE
@@ -35,6 +38,13 @@ static int diag_hsic_init(void)
 
 #ifndef CONFIG_MSM_MHI
 static int diag_mhi_init(void)
+{
+	return -EINVAL;
+}
+#endif
+
+#ifndef CONFIG_QTI_SDIO_CLIENT
+static int diag_sdio_init(void)
 {
 	return -EINVAL;
 }
@@ -269,14 +279,17 @@ int diag_remote_dev_write_done(int id, unsigned char *buf, int len, int ctxt)
 	return err;
 }
 
-int diagfwd_bridge_init(bool use_mhi)
+int diagfwd_bridge_init(int xprt)
 {
 	int err = 0;
 
-	if (use_mhi)
+	if (xprt == 1)
 		err = diag_mhi_init();
+	else if (xprt == 2)
+		err = diag_sdio_init();
 	else
 		err = diag_hsic_init();
+
 	if (err)
 		goto fail;
 	return 0;
@@ -286,7 +299,7 @@ fail:
 	return err;
 }
 
-void diagfwd_bridge_exit()
+void diagfwd_bridge_exit(void)
 {
 	#ifdef USB_QCOM_DIAG_BRIDGE
 	diag_hsic_exit();
@@ -313,7 +326,7 @@ int diagfwd_bridge_write(int id, unsigned char *buf, int len)
 	return 0;
 }
 
-uint16_t diag_get_remote_device_mask()
+uint16_t diag_get_remote_device_mask(void)
 {
 	int i;
 	uint16_t remote_dev = 0;

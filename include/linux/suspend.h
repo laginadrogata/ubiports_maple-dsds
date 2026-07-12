@@ -1,8 +1,3 @@
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2014 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 #ifndef _LINUX_SUSPEND_H
 #define _LINUX_SUSPEND_H
 
@@ -12,10 +7,6 @@
 #include <linux/pm.h>
 #include <linux/mm.h>
 #include <linux/freezer.h>
-#ifdef CONFIG_PM_WAKEUP_TIMES
-#include <linux/ktime.h>
-#include <linux/wait.h>
-#endif
 #include <asm/errno.h>
 
 #ifdef CONFIG_VT
@@ -60,20 +51,6 @@ enum suspend_stat_step {
 	SUSPEND_RESUME
 };
 
-#ifdef CONFIG_PM_WAKEUP_TIMES
-struct stats_wakeup_time {
-	ktime_t start;
-	ktime_t end;
-};
-
-struct suspend_stats_queue {
-	int resume_done;
-	wait_queue_head_t wait_queue;
-};
-
-extern struct suspend_stats_queue suspend_stats_queue;
-#endif
-
 struct suspend_stats {
 	int	success;
 	int	fail;
@@ -92,16 +69,6 @@ struct suspend_stats {
 	int	errno[REC_FAILED_NUM];
 	int	last_failed_step;
 	enum suspend_stat_step	failed_steps[REC_FAILED_NUM];
-#ifdef CONFIG_PM_WAKEUP_TIMES
-	struct stats_wakeup_time suspend_min_time;
-	struct stats_wakeup_time suspend_max_time;
-	struct stats_wakeup_time suspend_last_time;
-	ktime_t suspend_avg_time;
-	struct stats_wakeup_time resume_min_time;
-	struct stats_wakeup_time resume_max_time;
-	struct stats_wakeup_time resume_last_time;
-	ktime_t resume_avg_time;
-#endif
 };
 
 extern struct suspend_stats suspend_stats;
@@ -413,6 +380,7 @@ extern unsigned long get_safe_page(gfp_t gfp_mask);
 extern asmlinkage int swsusp_arch_suspend(void);
 extern asmlinkage int swsusp_arch_resume(void);
 
+static inline bool get_hibernation_status(void) { return true; };
 extern void hibernation_set_ops(const struct platform_hibernation_ops *ops);
 extern int hibernate(void);
 extern bool system_entering_hibernation(void);
@@ -426,6 +394,7 @@ static inline int swsusp_page_is_forbidden(struct page *p) { return 0; }
 static inline void swsusp_set_page_free(struct page *p) {}
 static inline void swsusp_unset_page_free(struct page *p) {}
 
+static inline bool get_hibernation_status(void) { return true; };
 static inline void hibernation_set_ops(const struct platform_hibernation_ops *ops) {}
 static inline int hibernate(void) { return -ENOSYS; }
 static inline bool system_entering_hibernation(void) { return false; }

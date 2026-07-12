@@ -1,12 +1,8 @@
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2015 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #include <linux/sched.h>
 #include <linux/sched/sysctl.h>
 #include <linux/sched/rt.h>
+#include <linux/sched/smt.h>
 #include <linux/sched/deadline.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
@@ -37,8 +33,10 @@ extern long calc_load_fold_active(struct rq *this_rq);
 
 #ifdef CONFIG_SMP
 extern void update_cpu_load_active(struct rq *this_rq);
+extern void check_for_migration(struct rq *rq, struct task_struct *p);
 #else
 static inline void update_cpu_load_active(struct rq *this_rq) { }
+static inline void check_for_migration(struct rq *rq, struct task_struct *p) { }
 #endif
 
 /*
@@ -230,15 +228,16 @@ struct cfs_bandwidth {
 	ktime_t period;
 	u64 quota, runtime;
 	s64 hierarchical_quota;
-	u64 runtime_expires;
 
-	int idle, period_active;
+	short idle, period_active;
 	struct hrtimer period_timer, slack_timer;
 	struct list_head throttled_cfs_rq;
 
 	/* statistics */
 	int nr_periods, nr_throttled;
 	u64 throttled_time;
+
+	bool distribute_running;
 #endif
 };
 
@@ -408,7 +407,7 @@ struct sched_cluster {
 	bool freq_init_done;
 	int dstate, dstate_wakeup_latency, dstate_wakeup_energy;
 	unsigned int static_cluster_pwr_cost;
-	atomic_t notifier_sent;
+	int notifier_sent;
 	bool wake_up_idle;
 	atomic64_t last_cc_update;
 	atomic64_t cycles;
@@ -432,7 +431,6 @@ struct related_thread_group {
 };
 
 extern struct list_head cluster_head;
-extern int num_clusters;
 extern struct sched_cluster *sched_cluster[NR_CPUS];
 
 struct cpu_cycle {
@@ -443,6 +441,7 @@ struct cpu_cycle {
 #define for_each_sched_cluster(cluster) \
 	list_for_each_entry_rcu(cluster, &cluster_head, list)
 
+extern unsigned int sched_disable_window_stats;
 #endif /* CONFIG_SCHED_HMP */
 
 /* CFS-related fields in a runqueue */
@@ -513,6 +512,10 @@ struct cfs_rq {
 	struct list_head leaf_cfs_rq_list;
 	struct task_group *tg;	/* group that "owns" this runqueue */
 
+#ifdef CONFIG_SCHED_WALT
+	u64 cumulative_runnable_avg;
+#endif
+
 #ifdef CONFIG_CFS_BANDWIDTH
 
 #ifdef CONFIG_SCHED_HMP
@@ -520,7 +523,6 @@ struct cfs_rq {
 #endif
 
 	int runtime_enabled;
-	u64 runtime_expires;
 	s64 runtime_remaining;
 
 	u64 throttled_clock, throttled_clock_task;
@@ -702,7 +704,6 @@ struct rq {
 	 * remote CPUs use both these fields when doing load calculation.
 	 */
 	unsigned int nr_running;
-	unsigned int nr_pinned_tasks;
 #ifdef CONFIG_NUMA_BALANCING
 	unsigned int nr_numa_running;
 	unsigned int nr_preferred_running;
@@ -796,6 +797,7 @@ struct rq {
 
 	int cstate, wakeup_latency, wakeup_energy;
 	u64 window_start;
+	u64 load_reported_window;
 	unsigned long hmp_flags;
 
 	u64 cur_irqload;
@@ -821,6 +823,7 @@ struct rq {
 #endif
 
 #ifdef CONFIG_SCHED_WALT
+	unsigned int cur_freq;
 	u64 cumulative_runnable_avg;
 	u64 window_start;
 	u64 curr_runnable_sum;
@@ -1119,13 +1122,9 @@ enum sched_boost_policy {
 #define WINDOW_STATS_MAX		1
 #define WINDOW_STATS_MAX_RECENT_AVG	2
 #define WINDOW_STATS_AVG		3
-#define WINDOW_STATS_MAX_RECENT_WMA	4
-#define WINDOW_STATS_WMA		5
-#define WINDOW_STATS_MAX_RECENT_EWA	6
-#define WINDOW_STATS_EWA		7
-#define WINDOW_STATS_INVALID_POLICY	8
+#define WINDOW_STATS_INVALID_POLICY	4
 
-#define SCHED_UPMIGRATE_MIN_NICE 9
+#define SCHED_UPMIGRATE_MIN_NICE 15
 #define EXITING_TASK_MARKER	0xdeaddead
 
 #define UP_MIGRATION		1
@@ -1158,10 +1157,9 @@ extern unsigned int  __read_mostly sched_small_wakee_task_load;
 extern unsigned int  __read_mostly sched_spill_load;
 extern unsigned int  __read_mostly sched_upmigrate;
 extern unsigned int  __read_mostly sched_downmigrate;
-extern unsigned int  __read_mostly sysctl_sched_spill_nr_run;
 extern unsigned int  __read_mostly sched_load_granule;
 
-extern void init_new_task_load(struct task_struct *p, bool idle_task);
+extern void init_new_task_load(struct task_struct *p);
 extern u64 sched_ktime_clock(void);
 extern int got_boost_kick(void);
 extern int register_cpu_cycle_counter_cb(struct cpu_cycle_counter_cb *cb);
@@ -1474,7 +1472,6 @@ static inline bool is_short_burst_task(struct task_struct *p)
 	       p->ravg.avg_sleep_time > sysctl_sched_short_sleep;
 }
 
-extern void check_for_migration(struct rq *rq, struct task_struct *p);
 extern void pre_big_task_count_change(const struct cpumask *cpus);
 extern void post_big_task_count_change(const struct cpumask *cpus);
 extern void set_hmp_defaults(void);
@@ -1651,7 +1648,7 @@ static inline struct sched_cluster *rq_cluster(struct rq *rq)
 	return NULL;
 }
 
-static inline void init_new_task_load(struct task_struct *p, bool idle_task)
+static inline void init_new_task_load(struct task_struct *p)
 {
 }
 
@@ -1734,7 +1731,6 @@ static inline int same_freq_domain(int src_cpu, int dst_cpu)
 	return 1;
 }
 
-static inline void check_for_migration(struct rq *rq, struct task_struct *p) { }
 static inline void pre_big_task_count_change(void) { }
 static inline void post_big_task_count_change(void) { }
 static inline void set_hmp_defaults(void) { }
@@ -1861,7 +1857,7 @@ static __always_inline bool static_branch_##name(struct static_key *key) \
 extern struct static_key sched_feat_keys[__SCHED_FEAT_NR];
 #define sched_feat(x) (static_branch_##x(&sched_feat_keys[__SCHED_FEAT_##x]))
 #else /* !(SCHED_DEBUG && HAVE_JUMP_LABEL) */
-#define sched_feat(x) (sysctl_sched_features & (1UL << __SCHED_FEAT_##x))
+#define sched_feat(x) !!(sysctl_sched_features & (1UL << __SCHED_FEAT_##x))
 #endif /* SCHED_DEBUG && HAVE_JUMP_LABEL */
 
 extern struct static_key_false sched_numa_balancing;
@@ -2034,6 +2030,7 @@ static const u32 prio_to_wmult[40] = {
 #define DEQUEUE_SLEEP		0x01
 #define DEQUEUE_SAVE		0x02 /* matches ENQUEUE_RESTORE */
 #define DEQUEUE_MOVE		0x04 /* matches ENQUEUE_MOVE */
+#define DEQUEUE_IDLE		0x80 /* The last dequeue before IDLE */
 
 #define ENQUEUE_WAKEUP		0x01
 #define ENQUEUE_RESTORE		0x02
@@ -2360,6 +2357,26 @@ unsigned long arch_scale_freq_capacity(struct sched_domain *sd, int cpu)
 }
 #endif
 
+#ifndef arch_scale_max_freq_capacity
+static __always_inline
+unsigned long arch_scale_max_freq_capacity(struct sched_domain *sd, int cpu)
+{
+	return SCHED_CAPACITY_SCALE;
+}
+#endif
+
+#ifndef arch_scale_min_freq_capacity
+static __always_inline
+unsigned long arch_scale_min_freq_capacity(struct sched_domain *sd, int cpu)
+{
+	/*
+	 * Multiplied with any capacity value, this scale factor will return
+	 * 0, which represents an un-capped state
+	 */
+	return 0;
+}
+#endif
+
 #ifndef arch_scale_cpu_capacity
 static __always_inline
 unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu)
@@ -2385,6 +2402,19 @@ static inline unsigned long capacity_orig_of(int cpu)
 extern unsigned int sysctl_sched_use_walt_cpu_util;
 extern unsigned int walt_ravg_window;
 extern bool walt_disabled;
+
+static inline unsigned long task_util(struct task_struct *p)
+{
+
+#ifdef CONFIG_SCHED_WALT
+	if (!walt_disabled && sysctl_sched_use_walt_task_util) {
+		unsigned long demand = p->ravg.demand;
+		return (demand << 10) / walt_ravg_window;
+	}
+#endif
+	return p->se.avg.util_avg;
+}
+
 
 /*
  * cpu_util returns the amount of capacity of a CPU that is used by CFS
@@ -2860,7 +2890,22 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 {
         struct update_util_data *data;
 
-        data = rcu_dereference_sched(*this_cpu_ptr(&cpufreq_update_util_data));
+#ifdef CONFIG_SCHED_HMP
+	/*
+	 * Skip if we've already reported, but not if this is an inter-cluster
+	 * migration. Also only allow WALT update sites.
+	 */
+	if (!(flags & SCHED_CPUFREQ_WALT))
+		return;
+	if (!sched_disable_window_stats &&
+		(rq->load_reported_window == rq->window_start) &&
+		!(flags & SCHED_CPUFREQ_INTERCLUSTER_MIG))
+		return;
+	rq->load_reported_window = rq->window_start;
+#endif
+
+		data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data,
+						cpu_of(rq)));
         if (data)
                 data->func(data, rq_clock(rq), flags);
 }

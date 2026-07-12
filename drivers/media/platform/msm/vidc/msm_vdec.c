@@ -23,6 +23,7 @@
 
 #define MSM_VDEC_DVC_NAME "msm_vdec_8974"
 #define MIN_NUM_OUTPUT_BUFFERS 4
+#define MIN_NUM_OUTPUT_BUFFERS_VP9 6
 #define MIN_NUM_OUTPUT_BUFFERS_HEVC 5
 #define MIN_NUM_CAPTURE_BUFFERS 6
 #define MIN_NUM_THUMBNAIL_MODE_CAPTURE_BUFFERS 1
@@ -600,6 +601,16 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 		.default_value = 0,
 		.step = OPERATING_FRAME_RATE_STEP,
 	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT,
+		.name = "Allow ubwc linear event",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.minimum = V4L2_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT_DISABLE,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT_ENABLE,
+		.default_value =
+			V4L2_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT_DISABLE,
+		.step = 1,
+	}
 };
 
 #define NUM_CTRLS ARRAY_SIZE(msm_vdec_ctrls)
@@ -1472,8 +1483,17 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 		if (*num_buffers < MIN_NUM_OUTPUT_BUFFERS ||
 				*num_buffers > MAX_NUM_OUTPUT_BUFFERS)
 			*num_buffers = MIN_NUM_OUTPUT_BUFFERS;
-
+		/*
+		 * Increase input buffer count to 6 as for some
+		 * vp9 clips which have superframes with more
+		 * than 4 subframes requires more than 4
+		 * reference frames to decode.
+		 */
 		if (inst->fmts[OUTPUT_PORT].fourcc ==
+				V4L2_PIX_FMT_VP9 &&
+				*num_buffers < MIN_NUM_OUTPUT_BUFFERS_VP9)
+			*num_buffers = MIN_NUM_OUTPUT_BUFFERS_VP9;
+		else if (inst->fmts[OUTPUT_PORT].fourcc ==
 				V4L2_PIX_FMT_HEVC &&
 				*num_buffers < MIN_NUM_OUTPUT_BUFFERS_HEVC)
 			*num_buffers = MIN_NUM_OUTPUT_BUFFERS_HEVC;
@@ -2084,6 +2104,7 @@ int msm_vdec_inst_init(struct msm_vidc_inst *inst)
 	inst->buffer_mode_set[CAPTURE_PORT] = HAL_BUFFER_MODE_STATIC;
 	inst->prop.fps = DEFAULT_FPS;
 	inst->operating_rate = 0;
+	inst->allow_ubwc_linear_event = 0;
 	return rc;
 }
 
@@ -2709,6 +2730,22 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 			"inst(%pK) operating rate changed from %d to %d\n",
 			inst, inst->operating_rate >> 16, ctrl->val >> 16);
 		inst->operating_rate = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT:
+		switch (ctrl->val) {
+		case V4L2_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT_ENABLE:
+			inst->allow_ubwc_linear_event = 1;
+			break;
+		case V4L2_MPEG_VIDC_VIDEO_ALLOW_UBWC_LINEAR_EVENT_DISABLE:
+			inst->allow_ubwc_linear_event = 0;
+			break;
+		default:
+			dprintk(VIDC_ERR,
+				"Invalid allow ubwc linear event control value %d\n",
+				ctrl->val);
+			rc = -ENOTSUPP;
+			break;
+		}
 		break;
 	default:
 		break;

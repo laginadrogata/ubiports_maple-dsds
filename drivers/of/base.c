@@ -17,11 +17,6 @@
  *      as published by the Free Software Foundation; either version
  *      2 of the License, or (at your option) any later version.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2014 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 #include <linux/console.h>
 #include <linux/ctype.h>
 #include <linux/cpu.h>
@@ -171,9 +166,6 @@ int __of_attach_node_sysfs(struct device_node *np)
 	struct kobject *parent;
 	struct property *pp;
 	int rc;
-
-	if (!IS_ENABLED(CONFIG_SYSFS))
-		return 0;
 
 	if (!of_kset)
 		return 0;
@@ -716,6 +708,31 @@ struct device_node *of_get_next_available_child(const struct device_node *node,
 	return next;
 }
 EXPORT_SYMBOL(of_get_next_available_child);
+
+/**
+ * of_get_compatible_child - Find compatible child node
+ * @parent:	parent node
+ * @compatible:	compatible string
+ *
+ * Lookup child node whose compatible property contains the given compatible
+ * string.
+ *
+ * Returns a node pointer with refcount incremented, use of_node_put() on it
+ * when done; or NULL if not found.
+ */
+struct device_node *of_get_compatible_child(const struct device_node *parent,
+				const char *compatible)
+{
+	struct device_node *child;
+
+	for_each_child_of_node(parent, child) {
+		if (of_device_is_compatible(child, compatible))
+			break;
+	}
+
+	return child;
+}
+EXPORT_SYMBOL(of_get_compatible_child);
 
 /**
  *	of_get_child_by_name - Find the child node by name for a given parent
@@ -2105,7 +2122,7 @@ struct device_node *of_find_next_cache_node(const struct device_node *np)
 	/* OF on pmac has nodes instead of properties named "l2-cache"
 	 * beneath CPU nodes.
 	 */
-	if (!strcmp(np->type, "cpu"))
+	if (IS_ENABLED(CONFIG_PPC_PMAC) && !strcmp(np->type, "cpu"))
 		for_each_child_of_node(np, child)
 			if (!strcmp(child->type, "cache"))
 				return child;

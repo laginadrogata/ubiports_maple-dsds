@@ -11,13 +11,13 @@
  * GNU General Public License for more details.
  */
 /*
+ * Qualcomm PMIC QPNP ADC driver header file
+ *
+ */
+/*
  * NOTE: This file has been modified by Sony Mobile Communications Inc.
  * Modifications are Copyright (c) 2016 Sony Mobile Communications Inc,
  * and licensed under the license of the file.
- */
-/*
- * Qualcomm PMIC QPNP ADC driver header file
- *
  */
 
 #ifndef __QPNP_ADC_H

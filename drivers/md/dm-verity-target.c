@@ -77,6 +77,14 @@ struct dm_verity_prefetch_work {
 struct buffer_aux {
 	int hash_verified;
 };
+/*
+ * While system shutdown, skip verity work for I/O error.
+ */
+static inline bool verity_is_system_shutting_down(void)
+{
+	return system_state == SYSTEM_HALT || system_state == SYSTEM_POWER_OFF
+		|| system_state == SYSTEM_RESTART;
+}
 
 /*
  * Initialize struct buffer_aux for a freshly created buffer.
@@ -244,8 +252,8 @@ static int verity_handle_err(struct dm_verity *v, enum verity_block_type type,
 		BUG();
 	}
 
-	DMERR("%s: %s block %llu is corrupted", v->data_dev->name, type_str,
-		block);
+	DMERR_LIMIT("%s: %s block %llu is corrupted", v->data_dev->name,
+		    type_str, block);
 
 #ifdef CONFIG_PANIC_ON_DM_VERITY_ERRORS
 	if (dm_verity_panic_on_err) {
@@ -543,7 +551,8 @@ static void verity_end_io(struct bio *bio)
 {
 	struct dm_verity_io *io = bio->bi_private;
 
-	if (bio->bi_error && !verity_fec_is_enabled(io->v)) {
+	if (bio->bi_error &&
+		(!verity_fec_is_enabled(io->v) || verity_is_system_shutting_down())) {
 		verity_finish_io(io, bio->bi_error);
 		return;
 	}
@@ -563,7 +572,6 @@ static void verity_prefetch_io(struct work_struct *work)
 		container_of(work, struct dm_verity_prefetch_work, work);
 	struct dm_verity *v = pw->v;
 	int i;
-	sector_t prefetch_size;
 
 	for (i = v->levels - 2; i >= 0; i--) {
 		sector_t hash_block_start;
@@ -586,14 +594,8 @@ static void verity_prefetch_io(struct work_struct *work)
 				hash_block_end = v->hash_blocks - 1;
 		}
 no_prefetch_cluster:
-		// for emmc, it is more efficient to send bigger read
-		prefetch_size = max((sector_t)CONFIG_DM_VERITY_HASH_PREFETCH_MIN_SIZE,
-			hash_block_end - hash_block_start + 1);
-		if ((hash_block_start + prefetch_size) >= (v->hash_start + v->hash_blocks)) {
-			prefetch_size = hash_block_end - hash_block_start + 1;
-		}
 		dm_bufio_prefetch(v->bufio, hash_block_start,
-				  prefetch_size);
+				  hash_block_end - hash_block_start + 1);
 	}
 
 	kfree(pw);

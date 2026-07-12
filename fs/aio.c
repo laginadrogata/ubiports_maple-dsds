@@ -40,6 +40,7 @@
 #include <linux/ramfs.h>
 #include <linux/percpu-refcount.h>
 #include <linux/mount.h>
+#include <linux/nospec.h>
 
 #include <asm/kmap_types.h>
 #include <asm/uaccess.h>
@@ -1064,6 +1065,7 @@ static struct kioctx *lookup_ioctx(unsigned long ctx_id)
 	if (!table || id >= table->nr)
 		goto out;
 
+	id = array_index_nospec(id, table->nr);
 	ctx = rcu_dereference(table->table[id]);
 	if (ctx && ctx->user_id == ctx_id) {
 		if (percpu_ref_tryget_live(&ctx->users))
@@ -1470,6 +1472,7 @@ rw_common:
 
 		len = ret;
 
+		get_file(file);
 		if (rw == WRITE)
 			file_start_write(file);
 
@@ -1477,6 +1480,7 @@ rw_common:
 
 		if (rw == WRITE)
 			file_end_write(file);
+		fput(file);
 		kfree(iovec);
 		break;
 
@@ -1596,7 +1600,9 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
+#ifndef CONFIG_AIO_SSD_ONLY
 	struct blk_plug plug;
+#endif
 
 	if (unlikely(nr < 0))
 		return -EINVAL;
@@ -1613,7 +1619,9 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 		return -EINVAL;
 	}
 
+#ifndef CONFIG_AIO_SSD_ONLY
 	blk_start_plug(&plug);
+#endif
 
 	/*
 	 * AKPM: should this return a partial result if some of the IOs were
@@ -1637,7 +1645,9 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 		if (ret)
 			break;
 	}
+#ifndef CONFIG_AIO_SSD_ONLY
 	blk_finish_plug(&plug);
+#endif
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;

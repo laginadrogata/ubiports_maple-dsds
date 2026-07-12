@@ -71,7 +71,7 @@ int iptunnel_xmit(struct sock *sk, struct rtable *rt, struct sk_buff *skb,
 
 	iph->version	=	4;
 	iph->ihl	=	sizeof(struct iphdr) >> 2;
-	iph->frag_off	=	df;
+	iph->frag_off	=	ip_mtu_locked(&rt->dst) ? 0 : df;
 	iph->protocol	=	proto;
 	iph->tos	=	tos;
 	iph->daddr	=	dst;
@@ -407,6 +407,12 @@ static const struct lwtunnel_encap_ops ip6_tun_lwt_ops = {
 
 void __init ip_tunnel_core_init(void)
 {
+	/* If you land here, make sure whether increasing ip_tunnel_info's
+	 * options_len is a reasonable choice with its usage in front ends
+	 * (f.e., it's part of flow keys, etc).
+	 */
+	BUILD_BUG_ON(IP_TUNNEL_OPTS_MAX != 255);
+
 	lwtunnel_encap_add_ops(&ip_tun_lwt_ops, LWTUNNEL_ENCAP_IP);
 	lwtunnel_encap_add_ops(&ip6_tun_lwt_ops, LWTUNNEL_ENCAP_IP6);
 }

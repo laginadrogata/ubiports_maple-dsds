@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018,2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -367,8 +367,8 @@ static ssize_t wsa881x_swrslave_reg_show(char __user *ubuf, size_t count,
 			continue;
 		swr_read(dbgwsa881x->swr_slave, devnum,
 			i, &reg_val, 1);
-		len = snprintf(tmp_buf, 25, "0x%.3x: 0x%.2x\n", i,
-			       (reg_val & 0xFF));
+		len = snprintf(tmp_buf, sizeof(tmp_buf), "0x%.3x: 0x%.2x\n",
+				 i, (reg_val & 0xFF));
 		if ((total + len) >= count - 1)
 			break;
 		if (copy_to_user((ubuf + total), tmp_buf, len)) {
@@ -818,7 +818,9 @@ static int wsa881x_rdac_event(struct snd_soc_dapm_widget *w,
 					    wsa881x->swr_slave->dev_num,
 					    false);
 		wsa881x_boost_ctrl(codec, DISABLE);
+		mutex_lock(&wsa881x->temp_lock);
 		wsa881x_resource_acquire(codec, DISABLE);
+		mutex_unlock(&wsa881x->temp_lock);
 		break;
 	}
 	return 0;
@@ -1238,6 +1240,8 @@ static int wsa881x_swr_probe(struct swr_device *pdev)
 	if (wsa881x->wsa_rst_np)
 		pin_state_current = msm_cdc_pinctrl_get_state(
 						wsa881x->wsa_rst_np);
+	mutex_init(&wsa881x->res_lock);
+	mutex_init(&wsa881x->temp_lock);
 	wsa881x_gpio_ctrl(wsa881x, true);
 	wsa881x->state = WSA881X_DEV_UP;
 
@@ -1296,8 +1300,6 @@ static int wsa881x_swr_probe(struct swr_device *pdev)
 			__func__);
 		goto dev_err;
 	}
-	mutex_init(&wsa881x->res_lock);
-	mutex_init(&wsa881x->temp_lock);
 
 	return 0;
 

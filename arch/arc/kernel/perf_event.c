@@ -48,7 +48,7 @@ struct arc_callchain_trace {
 static int callchain_trace(unsigned int addr, void *data)
 {
 	struct arc_callchain_trace *ctrl = data;
-	struct perf_callchain_entry *entry = ctrl->perf_stuff;
+	struct perf_callchain_entry_ctx *entry = ctrl->perf_stuff;
 	perf_callchain_store(entry, addr);
 
 	if (ctrl->depth++ < 3)
@@ -58,7 +58,7 @@ static int callchain_trace(unsigned int addr, void *data)
 }
 
 void
-perf_callchain_kernel(struct perf_callchain_entry *entry, struct pt_regs *regs)
+perf_callchain_kernel(struct perf_callchain_entry_ctx *entry, struct pt_regs *regs)
 {
 	struct arc_callchain_trace ctrl = {
 		.depth = 0,
@@ -69,7 +69,7 @@ perf_callchain_kernel(struct perf_callchain_entry *entry, struct pt_regs *regs)
 }
 
 void
-perf_callchain_user(struct perf_callchain_entry *entry, struct pt_regs *regs)
+perf_callchain_user(struct perf_callchain_entry_ctx *entry, struct pt_regs *regs)
 {
 	/*
 	 * User stack can't be unwound trivially with kernel dwarf unwinder
@@ -486,8 +486,8 @@ static int arc_pmu_device_probe(struct platform_device *pdev)
 	/* loop thru all available h/w condition indexes */
 	for (j = 0; j < cc_bcr.c; j++) {
 		write_aux_reg(ARC_REG_CC_INDEX, j);
-		cc_name.indiv.word0 = read_aux_reg(ARC_REG_CC_NAME0);
-		cc_name.indiv.word1 = read_aux_reg(ARC_REG_CC_NAME1);
+		cc_name.indiv.word0 = le32_to_cpu(read_aux_reg(ARC_REG_CC_NAME0));
+		cc_name.indiv.word1 = le32_to_cpu(read_aux_reg(ARC_REG_CC_NAME1));
 
 		/* See if it has been mapped to a perf event_id */
 		for (i = 0; i < ARRAY_SIZE(arc_pmu_ev_hw_map); i++) {

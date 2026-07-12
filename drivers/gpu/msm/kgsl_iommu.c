@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,6 +21,7 @@
 #include <linux/msm_kgsl.h>
 #include <linux/ratelimit.h>
 #include <linux/of_platform.h>
+#include <linux/random.h>
 #include <soc/qcom/scm.h>
 #include <soc/qcom/secure_buffer.h>
 #include <stddef.h>
@@ -84,15 +86,8 @@ static struct kmem_cache *addr_entry_cache;
  *
  * Here we define an array and a simple allocator to keep track of the currently
  * active global entries. Each entry is assigned a unique address inside of a
- * MMU implementation specific "global" region. The addresses are assigned
- * sequentially and never re-used to avoid having to go back and reprogram
- * existing pagetables. The entire list of active entries are mapped and
- * unmapped into every new pagetable as it is created and destroyed.
- *
- * Because there are relatively few entries and they are defined at boot time we
- * don't need to go over the top to define a dynamic allocation scheme. It will
- * be less wasteful to pick a static number with a little bit of growth
- * potential.
+ * MMU implementation specific "global" region. We use a simple bitmap based
+ * allocator for the region to allow for both fixed and dynamic addressing.
  */
 
 #define GLOBAL_PT_ENTRIES 32
@@ -102,10 +97,12 @@ struct global_pt_entry {
 	char name[32];
 };
 
+#define GLOBAL_MAP_PAGES (KGSL_IOMMU_GLOBAL_MEM_SIZE >> PAGE_SHIFT)
+
 static struct global_pt_entry global_pt_entries[GLOBAL_PT_ENTRIES];
 static struct kgsl_memdesc *kgsl_global_secure_pt_entry;
+static DECLARE_BITMAP(global_map, GLOBAL_MAP_PAGES);
 static int global_pt_count;
-uint64_t global_pt_alloc;
 static struct kgsl_memdesc gpu_qdss_desc;
 static struct kgsl_memdesc gpu_qtimer_desc;
 
@@ -186,6 +183,12 @@ static void kgsl_iommu_remove_global(struct kgsl_mmu *mmu,
 
 	for (i = 0; i < global_pt_count; i++) {
 		if (global_pt_entries[i].memdesc == memdesc) {
+			u64 offset = memdesc->gpuaddr -
+				KGSL_IOMMU_GLOBAL_MEM_BASE(mmu);
+
+			bitmap_clear(global_map, offset >> PAGE_SHIFT,
+				kgsl_memdesc_footprint(memdesc) >> PAGE_SHIFT);
+
 			memdesc->gpuaddr = 0;
 			memdesc->priv &= ~KGSL_MEMDESC_GLOBAL;
 			global_pt_entries[i].memdesc = NULL;
@@ -197,15 +200,44 @@ static void kgsl_iommu_remove_global(struct kgsl_mmu *mmu,
 static void kgsl_iommu_add_global(struct kgsl_mmu *mmu,
 		struct kgsl_memdesc *memdesc, const char *name)
 {
+	u32 bit;
+	u64 size = kgsl_memdesc_footprint(memdesc);
+	int start = 0;
+
 	if (memdesc->gpuaddr != 0)
 		return;
 
-	BUG_ON(global_pt_count >= GLOBAL_PT_ENTRIES);
-	BUG_ON((global_pt_alloc + memdesc->size) >= KGSL_IOMMU_GLOBAL_MEM_SIZE);
+	if (WARN_ON(global_pt_count >= GLOBAL_PT_ENTRIES))
+		return;
 
-	memdesc->gpuaddr = KGSL_IOMMU_GLOBAL_MEM_BASE(mmu) + global_pt_alloc;
+	if (WARN_ON(size > KGSL_IOMMU_GLOBAL_MEM_SIZE))
+		return;
+
+	if (memdesc->priv & KGSL_MEMDESC_RANDOM) {
+		u32 range = GLOBAL_MAP_PAGES - (size >> PAGE_SHIFT);
+
+		start = get_random_int() % range;
+	}
+
+	while (start >= 0) {
+		bit = bitmap_find_next_zero_area(global_map, GLOBAL_MAP_PAGES,
+			start, size >> PAGE_SHIFT, 0);
+
+		if (bit < GLOBAL_MAP_PAGES)
+			break;
+
+		start--;
+	}
+
+	if (WARN_ON(start < 0))
+		return;
+
+	memdesc->gpuaddr =
+		KGSL_IOMMU_GLOBAL_MEM_BASE(mmu) + (bit << PAGE_SHIFT);
+
+	bitmap_set(global_map, bit, size >> PAGE_SHIFT);
+
 	memdesc->priv |= KGSL_MEMDESC_GLOBAL;
-	global_pt_alloc += memdesc->size;
 
 	global_pt_entries[global_pt_count].memdesc = memdesc;
 	strlcpy(global_pt_entries[global_pt_count].name, name,
@@ -240,6 +272,7 @@ static void kgsl_setup_qdss_desc(struct kgsl_device *device)
 		return;
 	}
 
+	spin_lock_init(&gpu_qdss_desc.lock);
 	gpu_qdss_desc.flags = 0;
 	gpu_qdss_desc.priv = 0;
 	gpu_qdss_desc.physaddr = gpu_qdss_entry[0];
@@ -285,6 +318,7 @@ static void kgsl_setup_qtimer_desc(struct kgsl_device *device)
 		return;
 	}
 
+	spin_lock_init(&gpu_qtimer_desc.lock);
 	gpu_qtimer_desc.flags = 0;
 	gpu_qtimer_desc.priv = 0;
 	gpu_qtimer_desc.physaddr = gpu_qtimer_entry[0];
@@ -662,7 +696,7 @@ static void _get_entries(struct kgsl_process_private *private,
 		prev->flags = p->memdesc.flags;
 		prev->priv = p->memdesc.priv;
 		prev->pending_free = p->pending_free;
-		prev->pid = private->pid;
+		prev->pid = pid_nr(private->pid);
 		__kgsl_get_memory_usage(prev);
 	}
 
@@ -672,7 +706,7 @@ static void _get_entries(struct kgsl_process_private *private,
 		next->flags = n->memdesc.flags;
 		next->priv = n->memdesc.priv;
 		next->pending_free = n->pending_free;
-		next->pid = private->pid;
+		next->pid = pid_nr(private->pid);
 		__kgsl_get_memory_usage(next);
 	}
 }
@@ -870,11 +904,21 @@ static int kgsl_iommu_fault_handler(struct iommu_domain *domain,
 		no_page_fault_log = kgsl_mmu_log_fault_addr(mmu, ptbase, addr);
 
 	if (!no_page_fault_log && __ratelimit(&_rs)) {
+		const char *api_str;
+
+		if (context != NULL) {
+			struct adreno_context *drawctxt =
+					ADRENO_CONTEXT(context);
+
+			api_str = get_api_type_str(drawctxt->type);
+		} else
+			api_str = "UNKNOWN";
+
 		KGSL_MEM_CRIT(ctx->kgsldev,
 			"GPU PAGE FAULT: addr = %lX pid= %d\n", addr, ptname);
 		KGSL_MEM_CRIT(ctx->kgsldev,
-			"context=%s TTBR0=0x%llx CIDR=0x%x (%s %s fault)\n",
-			ctx->name, ptbase, contextidr,
+			"context=%s ctx_type=%s TTBR0=0x%llx CIDR=0x%x (%s %s fault)\n",
+			ctx->name, api_str, ptbase, contextidr,
 			write ? "write" : "read", fault_type);
 
 		/* Don't print the debug if this is a permissions fault */
@@ -1459,6 +1503,7 @@ static int _setstate_alloc(struct kgsl_device *device,
 {
 	int ret;
 
+	spin_lock_init(&iommu->setstate.lock);
 	ret = kgsl_sharedmem_alloc_contig(device, &iommu->setstate, PAGE_SIZE);
 
 	if (!ret) {
@@ -2349,6 +2394,26 @@ static uint64_t kgsl_iommu_find_svm_region(struct kgsl_pagetable *pagetable,
 	return addr;
 }
 
+static bool iommu_addr_in_svm_ranges(struct kgsl_iommu_pt *pt,
+	u64 gpuaddr, u64 size)
+{
+	u64 end = gpuaddr + size;
+
+	/* Make sure size is not zero and we don't wrap around */
+	if (end <= gpuaddr)
+		return false;
+
+	if ((gpuaddr >= pt->compat_va_start && gpuaddr < pt->compat_va_end) &&
+		(end > pt->compat_va_start && end <= pt->compat_va_end))
+		return true;
+
+	if ((gpuaddr >= pt->svm_start && gpuaddr < pt->svm_end) &&
+		(end > pt->svm_start && end <= pt->svm_end))
+		return true;
+
+	return false;
+}
+
 static int kgsl_iommu_set_svm_region(struct kgsl_pagetable *pagetable,
 		uint64_t gpuaddr, uint64_t size)
 {
@@ -2356,9 +2421,8 @@ static int kgsl_iommu_set_svm_region(struct kgsl_pagetable *pagetable,
 	struct kgsl_iommu_pt *pt = pagetable->priv;
 	struct rb_node *node;
 
-	/* Make sure the requested address doesn't fall in the global range */
-	if (ADDR_IN_GLOBAL(pagetable->mmu, gpuaddr) ||
-			ADDR_IN_GLOBAL(pagetable->mmu, gpuaddr + size))
+	/* Make sure the requested address doesn't fall out of SVM range */
+	if (!iommu_addr_in_svm_ranges(pt, gpuaddr, size))
 		return -ENOMEM;
 
 	spin_lock(&pagetable->lock);
@@ -2422,6 +2486,11 @@ static int kgsl_iommu_get_gpuaddr(struct kgsl_pagetable *pagetable,
 		goto out;
 	}
 
+	/*
+	 * This path is only called in a non-SVM path with locks so we can be
+	 * sure we aren't racing with anybody so we don't need to worry about
+	 * taking the lock
+	 */
 	ret = _insert_gpuaddr(pagetable, addr, size);
 	if (ret == 0) {
 		memdesc->gpuaddr = addr;
@@ -2461,20 +2530,21 @@ static int kgsl_iommu_svm_range(struct kgsl_pagetable *pagetable,
 }
 
 static bool kgsl_iommu_addr_in_range(struct kgsl_pagetable *pagetable,
-		uint64_t gpuaddr)
+		uint64_t gpuaddr, uint64_t size)
 {
 	struct kgsl_iommu_pt *pt = pagetable->priv;
 
 	if (gpuaddr == 0)
 		return false;
 
-	if (gpuaddr >= pt->va_start && gpuaddr < pt->va_end)
+	if (gpuaddr >= pt->va_start && (gpuaddr + size) < pt->va_end)
 		return true;
 
-	if (gpuaddr >= pt->compat_va_start && gpuaddr < pt->compat_va_end)
+	if (gpuaddr >= pt->compat_va_start &&
+			(gpuaddr + size) < pt->compat_va_end)
 		return true;
 
-	if (gpuaddr >= pt->svm_start && gpuaddr < pt->svm_end)
+	if (gpuaddr >= pt->svm_start && (gpuaddr + size) < pt->svm_end)
 		return true;
 
 	return false;

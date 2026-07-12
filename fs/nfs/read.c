@@ -115,7 +115,7 @@ int nfs_readpage_async(struct nfs_open_context *ctx, struct inode *inode,
 	pgm = &pgio.pg_mirrors[0];
 	NFS_I(inode)->read_io += pgm->pg_bytes_written;
 
-	return 0;
+	return pgio.pg_error < 0 ? pgio.pg_error : 0;
 }
 
 static void nfs_readpage_release(struct nfs_page *req)
@@ -343,7 +343,7 @@ struct nfs_readdesc {
 };
 
 static int
-readpage_async_filler(void *data, struct page *page)
+readpage_async_filler(struct file *data, struct page *page)
 {
 	struct nfs_readdesc *desc = (struct nfs_readdesc *)data;
 	struct nfs_page *new;

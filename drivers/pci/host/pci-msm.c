@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -2067,6 +2067,7 @@ static void msm_pcie_sel_debug_testcase(struct msm_pcie_dev_t *dev,
 	u32 ep_l1sub_cap_reg1_offset = 0;
 	u32 ep_link_ctrlstts_offset = 0;
 	u32 ep_dev_ctrl2stts2_offset = 0;
+	u32 wr_ofst = 0;
 
 	if (testcase >= 5 && testcase <= 10) {
 		current_offset =
@@ -2428,25 +2429,32 @@ static void msm_pcie_sel_debug_testcase(struct msm_pcie_dev_t *dev,
 			break;
 		}
 
+		wr_ofst = wr_offset;
+
 		PCIE_DBG_FS(dev,
 			"base: %s: 0x%p\nwr_offset: 0x%x\nwr_mask: 0x%x\nwr_value: 0x%x\n",
 			dev->res[base_sel - 1].name,
 			dev->res[base_sel - 1].base,
-			wr_offset, wr_mask, wr_value);
+			wr_ofst, wr_mask, wr_value);
 
 		base_sel_size = resource_size(dev->res[base_sel - 1].resource);
 
-		if (wr_offset >  base_sel_size - 4 ||
-			msm_pcie_check_align(dev, wr_offset))
+		if (wr_ofst >  base_sel_size - 4 ||
+			msm_pcie_check_align(dev, wr_ofst))
 			PCIE_DBG_FS(dev,
 				"PCIe: RC%d: Invalid wr_offset: 0x%x. wr_offset should be no more than 0x%x\n",
-				dev->rc_idx, wr_offset, base_sel_size - 4);
+				dev->rc_idx, wr_ofst, base_sel_size - 4);
 		else
 			msm_pcie_write_reg_field(dev->res[base_sel - 1].base,
-				wr_offset, wr_mask, wr_value);
+				wr_ofst, wr_mask, wr_value);
 
 		break;
 	case 13: /* dump all registers of base_sel */
+		if (!base_sel) {
+			PCIE_DBG_FS(dev, "Invalid base_sel: 0x%x\n", base_sel);
+			break;
+		}
+
 		if (((base_sel - 1) >= MSM_PCIE_MAX_RES) ||
 					(!dev->res[base_sel - 1].resource)) {
 			PCIE_DBG_FS(dev, "PCIe: RC%d Resource does not exist\n",
@@ -2454,10 +2462,7 @@ static void msm_pcie_sel_debug_testcase(struct msm_pcie_dev_t *dev,
 			break;
 		}
 
-		if (!base_sel) {
-			PCIE_DBG_FS(dev, "Invalid base_sel: 0x%x\n", base_sel);
-			break;
-		} else if (base_sel - 1 == MSM_PCIE_RES_PARF) {
+		if (base_sel - 1 == MSM_PCIE_RES_PARF) {
 			pcie_parf_dump(dev);
 			break;
 		} else if (base_sel - 1 == MSM_PCIE_RES_PHY) {
@@ -4515,7 +4520,7 @@ int msm_pcie_enable(struct msm_pcie_dev_t *dev, u32 options)
 
 	/* assert PCIe reset link to keep EP in reset */
 
-	PCIE_INFO(dev, "PCIe: Assert the reset of endpoint of RC%d.\n",
+	PCIE_DBG(dev, "PCIe: Assert the reset of endpoint of RC%d.\n",
 		dev->rc_idx);
 	gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
 				dev->gpio[MSM_PCIE_GPIO_PERST].on);
@@ -4635,7 +4640,7 @@ int msm_pcie_enable(struct msm_pcie_dev_t *dev, u32 options)
 		dev->rc_idx, retries);
 
 	if (pcie_phy_is_ready(dev))
-		PCIE_INFO(dev, "PCIe RC%d PHY is ready!\n", dev->rc_idx);
+		PCIE_DBG(dev, "PCIe RC%d PHY is ready!\n", dev->rc_idx);
 	else {
 		PCIE_ERR(dev, "PCIe PHY RC%d failed to come up!\n",
 			dev->rc_idx);
@@ -4655,7 +4660,7 @@ int msm_pcie_enable(struct msm_pcie_dev_t *dev, u32 options)
 
 	/* de-assert PCIe reset link to bring EP out of reset */
 
-	PCIE_INFO(dev, "PCIe: Release the reset of endpoint of RC%d.\n",
+	PCIE_DBG(dev, "PCIe: Release the reset of endpoint of RC%d.\n",
 		dev->rc_idx);
 	gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
 				1 - dev->gpio[MSM_PCIE_GPIO_PERST].on);
@@ -4684,9 +4689,9 @@ int msm_pcie_enable(struct msm_pcie_dev_t *dev, u32 options)
 		msm_pcie_confirm_linkup(dev, false, false, NULL)) {
 		PCIE_DBG(dev, "Link is up after %d checkings\n",
 			link_check_count);
-		PCIE_INFO(dev, "PCIe RC%d link initialized\n", dev->rc_idx);
+		PCIE_DBG(dev, "PCIe RC%d link initialized\n", dev->rc_idx);
 	} else {
-		PCIE_INFO(dev, "PCIe: Assert the reset of endpoint of RC%d.\n",
+		PCIE_DBG(dev, "PCIe: Assert the reset of endpoint of RC%d.\n",
 			dev->rc_idx);
 		gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
 			dev->gpio[MSM_PCIE_GPIO_PERST].on);
@@ -4769,7 +4774,7 @@ void msm_pcie_disable(struct msm_pcie_dev_t *dev, u32 options)
 	dev->power_on = false;
 	dev->link_turned_off_counter++;
 
-	PCIE_INFO(dev, "PCIe: Assert the reset of endpoint of RC%d.\n",
+	PCIE_DBG(dev, "PCIe: Assert the reset of endpoint of RC%d.\n",
 		dev->rc_idx);
 
 	gpio_set_value(dev->gpio[MSM_PCIE_GPIO_PERST].num,
@@ -6731,8 +6736,8 @@ module_exit(pcie_exit);
 /* RC do not represent the right class; set it to PCI_CLASS_BRIDGE_PCI */
 static void msm_pcie_fixup_early(struct pci_dev *dev)
 {
-	struct msm_pcie_dev_t *pcie_dev = PCIE_BUS_PRIV_DATA(dev->bus);
-	PCIE_DBG(pcie_dev, "hdr_type %d\n", dev->hdr_type);
+	PCIE_DBG((struct msm_pcie_dev_t*)PCIE_BUS_PRIV_DATA(dev->bus), "hdr_type %d\n",
+		dev->hdr_type);
 	if (dev->hdr_type == 1)
 		dev->class = (dev->class & 0xff) | (PCI_CLASS_BRIDGE_PCI << 8);
 }

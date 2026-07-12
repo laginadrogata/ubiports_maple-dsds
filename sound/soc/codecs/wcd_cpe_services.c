@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -668,8 +668,8 @@ static void cpe_notify_cmi_client(struct cpe_info *t_info, u8 *payload,
 	hdr = CMI_GET_HEADER(payload);
 	service = CMI_HDR_GET_SERVICE(hdr);
 
-	notif.event = CPE_SVC_CMI_MSG;
-	notif.result = result;
+	notif.event = (enum cmi_api_event)CPE_SVC_CMI_MSG;
+	notif.result = (enum cmi_api_result)result;
 	notif.message = payload;
 
 	CPE_SVC_GRAB_LOCK(&cpe_d.cpe_svc_lock, "cpe_svc");
@@ -1183,7 +1183,7 @@ static enum cpe_process_result cpe_boot_complete(
 	}
 
 	pr_debug("%s: boot complete\n", __func__);
-	return CPE_SVC_SUCCESS;
+	return CPE_PROC_SUCCESS;
 }
 
 static enum cpe_process_result cpe_process_send_msg(
@@ -1360,7 +1360,8 @@ static enum cpe_process_result cpe_mt_process_cmd(
 
 		cpe_change_state(t_info, CPE_STATE_SENDING_MSG,
 				CPE_SS_MSG_SEND_INBOX);
-		rc = cpe_send_msg_to_inbox(t_info, 0, m);
+		rc = (enum cpe_process_result)cpe_send_msg_to_inbox(t_info, 0,
+				m);
 		break;
 
 	case CPE_CMD_SEND_MSG_COMPLETE:

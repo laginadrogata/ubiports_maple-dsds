@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -201,6 +201,7 @@
 #define IPA2_ACTIVE_CLIENTS_LOG_LINE_LEN 96
 #define IPA2_ACTIVE_CLIENTS_LOG_HASHTABLE_SIZE 50
 #define IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN 40
+#define IPA_RULE_CNT_MAX 512
 
 struct ipa2_active_client_htable_entry {
 	struct hlist_node list;
@@ -1105,6 +1106,8 @@ struct ipa_context {
 	struct cdev cdev;
 	unsigned long bam_handle;
 	struct ipa_ep_context ep[IPA_MAX_NUM_PIPES];
+	void __iomem *ipa_non_ap_bam_s_desc_iova[IPA_MAX_NUM_PIPES];
+	void __iomem *ipa_non_ap_bam_p_desc_iova[IPA_MAX_NUM_PIPES];
 	bool skip_ep_cfg_shadow[IPA_MAX_NUM_PIPES];
 	bool resume_on_connect[IPA_CLIENT_MAX];
 	struct ipa_flt_tbl flt_tbl[IPA_MAX_NUM_PIPES][IPA_IP_MAX];
@@ -1900,6 +1903,9 @@ int ipa_q6_pre_shutdown_cleanup(void);
 int ipa_apps_shutdown_cleanup(void);
 int register_ipa_platform_cb(int (*cb)(void));
 int ipa_q6_post_shutdown_cleanup(void);
+int wait_for_ep_empty(enum ipa_client_type client);
+int ioremap_non_ap_bam_regs(void);
+void iounmap_non_ap_bam_regs(void);
 int ipa_init_q6_smem(void);
 int ipa_q6_monitor_holb_mitigation(bool enable);
 

@@ -196,7 +196,7 @@ static int mmc_ios_show(struct seq_file *s, void *data)
 		str = "invalid";
 		break;
 	}
-	seq_printf(s, "signal voltage:\t%u (%s)\n", ios->chip_select, str);
+	seq_printf(s, "signal voltage:\t%u (%s)\n", ios->signal_voltage, str);
 
 	switch (ios->drv_type) {
 	case MMC_SET_DRIVER_TYPE_A:
@@ -246,7 +246,7 @@ static int mmc_clock_opt_set(void *data, u64 val)
 	struct mmc_host *host = data;
 
 	/* We need this check due to input value is u64 */
-	if (val > host->f_max)
+	if (val != 0 && (val > host->f_max || val < host->f_min))
 		return -EINVAL;
 
 	mmc_claim_host(host);
@@ -871,50 +871,6 @@ static const struct file_operations mmc_dbg_bkops_stats_fops = {
 	.write		= mmc_bkops_stats_write,
 };
 
-#ifdef CONFIG_MMC_CMD_DEBUG
-static int mmc_cmd_stats_show(struct seq_file *s, void *data)
-{
-	int i;
-	struct mmc_card *card = s->private;
-	unsigned long long t;
-	unsigned long rem_nsec;
-
-	if (card->cmd_stats.wrapped) {
-		for (i = card->cmd_stats.next_idx; i < CMD_QUEUE_SIZE; i++) {
-			t = card->cmd_stats.cmdq[i].timestamp;
-			rem_nsec = do_div(t, 1000000000);
-			seq_printf(s, "[%5llu.%06lu] CMD%u arg %08x flags %08x\n",
-				t, (rem_nsec/1000),
-				card->cmd_stats.cmdq[i].opcode,
-				card->cmd_stats.cmdq[i].arg,
-				card->cmd_stats.cmdq[i].flags);
-		}
-	}
-
-	for (i = 0; i < card->cmd_stats.next_idx; i++) {
-		t = card->cmd_stats.cmdq[i].timestamp;
-		rem_nsec = do_div(t, 1000000000);
-		seq_printf(s, "[%5llu.%06lu] CMD%u arg %08x flags %08x\n",
-			t, (rem_nsec/1000),
-			card->cmd_stats.cmdq[i].opcode,
-			card->cmd_stats.cmdq[i].arg,
-			card->cmd_stats.cmdq[i].flags);
-	}
-
-	return 0;
-}
-
-static int mmc_cmd_stats_open(struct inode *inode, struct file *filp)
-{
-	return single_open(filp, mmc_cmd_stats_show, inode->i_private);
-}
-
-static const struct file_operations mmc_dbg_card_rq_cmdq_fops = {
-	.open		= mmc_cmd_stats_open,
-	.read		= seq_read,
-};
-#endif
-
 void mmc_add_card_debugfs(struct mmc_card *card)
 {
 	struct mmc_host	*host = card->host;
@@ -941,12 +897,7 @@ void mmc_add_card_debugfs(struct mmc_card *card)
 		if (!debugfs_create_file("status", S_IRUSR, root, card,
 					&mmc_dbg_card_status_fops))
 			goto err;
-#ifdef CONFIG_MMC_CMD_DEBUG
-	if (mmc_card_mmc(card) || mmc_card_sd(card))
-		if (!debugfs_create_file("mmc_cmd_stats", S_IRUSR, root,
-				card, &mmc_dbg_card_rq_cmdq_fops))
-			goto err;
-#endif
+
 	if (mmc_card_mmc(card))
 		if (!debugfs_create_file("ext_csd", S_IRUSR, root, card,
 					&mmc_dbg_ext_csd_fops))

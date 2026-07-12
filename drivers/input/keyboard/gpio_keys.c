@@ -9,11 +9,6 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2015 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #include <linux/module.h>
 
@@ -110,11 +105,27 @@ static void gpio_keys_syscore_resume(void);
  * Return value of this function can be used to allocate bitmap
  * large enough to hold all bits for given type.
  */
-static inline int get_n_events_by_type(int type)
+static int get_n_events_by_type(int type)
 {
 	BUG_ON(type != EV_SW && type != EV_KEY);
 
 	return (type == EV_KEY) ? KEY_CNT : SW_CNT;
+}
+
+/**
+ * get_bm_events_by_type() - returns bitmap of supported events per @type
+ * @input: input device from which bitmap is retrieved
+ * @type: type of button (%EV_KEY, %EV_SW)
+ *
+ * Return value of this function can be used to allocate bitmap
+ * large enough to hold all bits for given type.
+ */
+static const unsigned long *get_bm_events_by_type(struct input_dev *dev,
+						  int type)
+{
+	BUG_ON(type != EV_SW && type != EV_KEY);
+
+	return (type == EV_KEY) ? dev->keybit : dev->swbit;
 }
 
 /**
@@ -227,6 +238,7 @@ static ssize_t gpio_keys_attr_store_helper(struct gpio_keys_drvdata *ddata,
 					   const char *buf, unsigned int type)
 {
 	int n_events = get_n_events_by_type(type);
+	const unsigned long *bitmap = get_bm_events_by_type(ddata->input, type);
 	unsigned long *bits;
 	ssize_t error;
 	int i;
@@ -240,6 +252,11 @@ static ssize_t gpio_keys_attr_store_helper(struct gpio_keys_drvdata *ddata,
 		goto out;
 
 	/* First validate */
+	if (!bitmap_subset(bits, bitmap, n_events)) {
+		error = -EINVAL;
+		goto out;
+	}
+
 	for (i = 0; i < ddata->pdata->nbuttons; i++) {
 		struct gpio_button_data *bdata = &ddata->data[i];
 
@@ -251,11 +268,6 @@ static ssize_t gpio_keys_attr_store_helper(struct gpio_keys_drvdata *ddata,
 			error = -EINVAL;
 			goto out;
 		}
-	}
-
-	if (i == ddata->pdata->nbuttons) {
-		error = -EINVAL;
-		goto out;
 	}
 
 	mutex_lock(&ddata->disable_lock);

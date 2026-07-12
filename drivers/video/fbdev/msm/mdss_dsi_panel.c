@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,6 +31,7 @@
 #include "mdss_dsi.h"
 #include "mdss_dba_utils.h"
 #include "mdss_debug.h"
+#include "mdss_livedisplay.h"
 #ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
 #include "mdss_dsi_panel_driver.h"
 #include "mdss_dsi_panel_debugfs.h"
@@ -189,13 +190,9 @@ static void mdss_dsi_panel_apply_settings(struct mdss_dsi_ctrl_pdata *ctrl,
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
 
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
+
 void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
 			struct dsi_panel_cmds *pcmds, u32 flags)
-#else
-static void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
-			struct dsi_panel_cmds *pcmds, u32 flags)
-#endif /* CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL*/
 {
 	struct dcs_cmd_req cmdreq;
 	struct mdss_panel_info *pinfo;
@@ -247,7 +244,7 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 	memset(&cmdreq, 0, sizeof(cmdreq));
 	cmdreq.cmds = &backlight_cmd;
 	cmdreq.cmds_cnt = 1;
-	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL;
+	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL | CMD_REQ_DCS;
 	cmdreq.rlen = 0;
 	cmdreq.cb = NULL;
 
@@ -1013,6 +1010,10 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 
 	/* Ensure low persistence mode is set as before */
 	mdss_dsi_panel_apply_display_setting(pdata, pinfo->persist_mode);
+
+	if (pdata->event_handler)
+		pdata->event_handler(pdata, MDSS_EVENT_UPDATE_LIVEDISPLAY,
+				(void *)(unsigned long) MODE_UPDATE_ALL);
 
 end:
 	pr_debug("%s:-\n", __func__);
@@ -1894,17 +1895,13 @@ static bool mdss_dsi_cmp_panel_reg_v2(struct mdss_dsi_ctrl_pdata *ctrl)
 	for (i = 0; i < ctrl->status_cmds.cmd_cnt; i++)
 		len += lenp[i];
 
-	for (i = 0; i < len; i++) {
-		pr_debug("[%i] return:0x%x status:0x%x\n",
-			i, (unsigned int)ctrl->return_buf[i],
-			(unsigned int)ctrl->status_value[j + i]);
-		MDSS_XLOG(ctrl->ndx, ctrl->return_buf[i],
-			ctrl->status_value[j + i]);
-		j += len;
-	}
-
 	for (j = 0; j < ctrl->groups; ++j) {
 		for (i = 0; i < len; ++i) {
+			pr_debug("[%i] return:0x%x status:0x%x\n",
+				i, ctrl->return_buf[i],
+				(unsigned int)ctrl->status_value[group + i]);
+			MDSS_XLOG(ctrl->ndx, ctrl->return_buf[i],
+					ctrl->status_value[group + i]);
 			if (ctrl->return_buf[i] !=
 				ctrl->status_value[group + i])
 				break;
@@ -2415,14 +2412,15 @@ static void mdss_dsi_parse_dfps_config(struct device_node *pan_node,
 			struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	const char *data;
-	bool dynamic_fps;
+	bool dynamic_fps, dynamic_bitclk;
 	struct mdss_panel_info *pinfo = &(ctrl_pdata->panel_data.panel_info);
+	int rc = 0;
 
 	dynamic_fps = of_property_read_bool(pan_node,
 			"qcom,mdss-dsi-pan-enable-dynamic-fps");
 
 	if (!dynamic_fps)
-		return;
+		goto dynamic_bitclk;
 
 	pinfo->dynamic_fps = true;
 	data = of_get_property(pan_node, "qcom,mdss-dsi-pan-fps-update", NULL);
@@ -2452,6 +2450,31 @@ static void mdss_dsi_parse_dfps_config(struct device_node *pan_node,
 	pinfo->new_fps = pinfo->mipi.frame_rate;
 	pinfo->current_fps = pinfo->mipi.frame_rate;
 
+dynamic_bitclk:
+	dynamic_bitclk = of_property_read_bool(pan_node,
+			"qcom,mdss-dsi-pan-enable-dynamic-bitclk");
+	if (!dynamic_bitclk)
+		return;
+
+	of_find_property(pan_node, "qcom,mdss-dsi-dynamic-bitclk_freq",
+		&pinfo->supp_bitclk_len);
+	pinfo->supp_bitclk_len = pinfo->supp_bitclk_len/sizeof(u32);
+	if (pinfo->supp_bitclk_len < 1)
+		return;
+
+	pinfo->supp_bitclks = kzalloc((sizeof(u32) * pinfo->supp_bitclk_len),
+		GFP_KERNEL);
+	if (!pinfo->supp_bitclks)
+		return;
+
+	rc = of_property_read_u32_array(pan_node,
+		"qcom,mdss-dsi-dynamic-bitclk_freq", pinfo->supp_bitclks,
+		pinfo->supp_bitclk_len);
+	if (rc) {
+		pr_err("Error from dynamic bitclk freq u64 array read\n");
+		return;
+	}
+	pinfo->dynamic_bitclk = true;
 	return;
 }
 
@@ -3102,6 +3125,8 @@ static int mdss_panel_parse_dt(struct device_node *np,
 	if (rc)
 		pinfo->esc_clk_rate_hz = MDSS_DSI_MAX_ESC_CLK_RATE_HZ;
 	pr_debug("%s: esc clk %d\n", __func__, pinfo->esc_clk_rate_hz);
+
+	mdss_livedisplay_parse_dt(np, pinfo);
 
 	return 0;
 

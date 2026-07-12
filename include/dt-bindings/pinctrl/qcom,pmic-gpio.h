@@ -1,11 +1,6 @@
 /*
  * This header provides constants for the Qualcomm PMIC GPIO binding.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2014 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #ifndef _DT_BINDINGS_PINCTRL_QCOM_PMIC_GPIO_H
 #define _DT_BINDINGS_PINCTRL_QCOM_PMIC_GPIO_H
@@ -16,9 +11,14 @@
 #define PMIC_GPIO_PULL_UP_1P5_30	3
 
 #define PMIC_GPIO_STRENGTH_NO		0
-#define PMIC_GPIO_STRENGTH_HIGH		1
+#define PMIC_GPIO_STRENGTH_LOW		1
 #define PMIC_GPIO_STRENGTH_MED		2
-#define PMIC_GPIO_STRENGTH_LOW		3
+#define PMIC_GPIO_STRENGTH_HIGH		3
+
+#define PM8921_GPIO_STRENGTH_NO		0
+#define PM8921_GPIO_STRENGTH_HIGH	1
+#define PM8921_GPIO_STRENGTH_MED	2
+#define PM8921_GPIO_STRENGTH_LOW	3
 
 /*
  * Note: PM8018 GPIO3 and GPIO4 are supporting

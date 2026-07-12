@@ -23,7 +23,7 @@
 #include <linux/regulator/driver.h>
 
 enum labibb_notify_event {
-       LAB_VREG_OK = 1,
+	LAB_VREG_OK = 1,
 	LAB_VREG_NOT_OK,
 };
 

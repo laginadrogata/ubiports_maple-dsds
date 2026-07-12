@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018,2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1738,8 +1738,8 @@ static unsigned int cpe_err_status_poll(struct file *filp,
 
 	if (ssr_entry->err_data_ready)
 		mask |= (POLLIN | POLLRDNORM);
-
 	poll_wait(filp, &ssr_entry->err_status_debug_q, wait);
+
 	return mask;
 }
 
@@ -2067,8 +2067,8 @@ struct wcd_cpe_core *wcd_cpe_init(const char *img_fname,
 	}
 
 	card = codec->component.card->snd_card;
-	snprintf(proc_name, (sizeof("cpe") + sizeof("_state") +
-		 sizeof(id) - 2), "%s%d%s", cpe_name, id, state_name);
+	snprintf(proc_name, sizeof(proc_name), "%s%d%s", cpe_name, id,
+		state_name);
 	entry = snd_info_create_card_entry(card, proc_name,
 					   card->proc_root);
 	if (entry) {

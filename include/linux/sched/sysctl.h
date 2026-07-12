@@ -41,6 +41,12 @@ extern unsigned int sysctl_sched_wakeup_granularity;
 extern unsigned int sysctl_sched_child_runs_first;
 extern unsigned int sysctl_sched_sync_hint_enable;
 extern unsigned int sysctl_sched_cstate_aware;
+#ifdef CONFIG_SCHED_WALT
+extern unsigned int sysctl_sched_use_walt_cpu_util;
+extern unsigned int sysctl_sched_use_walt_task_util;
+extern unsigned int sysctl_sched_walt_init_task_load_pct;
+extern unsigned int sysctl_sched_walt_cpu_high_irqload;
+#endif
 
 #ifdef CONFIG_SCHED_HMP
 
@@ -58,7 +64,7 @@ extern unsigned int sysctl_sched_window_stats_policy;
 extern unsigned int sysctl_sched_ravg_hist_size;
 extern unsigned int sysctl_sched_cpu_high_irqload;
 extern unsigned int sysctl_sched_init_task_load_pct;
-extern unsigned int sysctl_sched_spill_nr_run;
+extern __read_mostly unsigned int sysctl_sched_spill_nr_run;
 extern unsigned int sysctl_sched_spill_load_pct;
 extern unsigned int sysctl_sched_upmigrate_pct;
 extern unsigned int sysctl_sched_downmigrate_pct;
@@ -104,9 +110,10 @@ extern unsigned int sysctl_numa_balancing_scan_period_max;
 extern unsigned int sysctl_numa_balancing_scan_size;
 
 #ifdef CONFIG_SCHED_DEBUG
-extern unsigned int sysctl_sched_migration_cost;
-extern unsigned int sysctl_sched_nr_migrate;
-extern unsigned int sysctl_sched_time_avg;
+extern __read_mostly unsigned int sysctl_sched_migration_cost;
+extern __read_mostly unsigned int sysctl_sched_nr_migrate;
+extern __read_mostly unsigned int sysctl_sched_time_avg;
+
 extern unsigned int sysctl_sched_shares_window;
 
 int sched_proc_update_handler(struct ctl_table *table, int write,
@@ -159,6 +166,7 @@ static inline unsigned int get_sysctl_sched_cfs_boost(void)
 extern unsigned int sysctl_sched_autogroup_enabled;
 #endif
 
+extern int sysctl_sched_rr_timeslice;
 extern int sched_rr_timeslice;
 
 extern int sched_rr_handler(struct ctl_table *table, int write,

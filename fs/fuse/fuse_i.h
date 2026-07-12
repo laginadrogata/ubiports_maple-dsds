@@ -5,11 +5,6 @@
   This program can be distributed under the terms of the GNU GPL.
   See the file COPYING.
 */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2013 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #ifndef _FS_FUSE_I_H
 #define _FS_FUSE_I_H
@@ -49,11 +44,6 @@
 /** If the FUSE_ALLOW_OTHER flag is given, then not only the user
     doing the mount will be allowed to access the filesystem */
 #define FUSE_ALLOW_OTHER         (1 << 1)
-
-/** If the FUSE_ALLOW_UTIME_GRP flag is given, then call to utime() is
-    allowed for the current process if it's in the same group as the
-    file and if the file's group is writeable */
-#define FUSE_ALLOW_UTIME_GRP     (1 << 2)
 
 /** Number of page pointers embedded in fuse_req */
 #define FUSE_REQ_INLINE_PAGES 1
@@ -267,6 +257,7 @@ struct fuse_io_priv {
 	size_t size;
 	__u64 offset;
 	bool write;
+	bool should_dirty;
 	int err;
 	struct kiocb *iocb;
 	struct file *file;
@@ -275,7 +266,7 @@ struct fuse_io_priv {
 
 #define FUSE_IO_PRIV_SYNC(f) \
 {					\
-	.refcnt = { ATOMIC_INIT(1) },	\
+	.refcnt = KREF_INIT(1),		\
 	.async = 0,			\
 	.file = f,			\
 }
@@ -866,6 +857,7 @@ void fuse_request_send_background_locked(struct fuse_conn *fc,
 
 /* Abort all requests */
 void fuse_abort_conn(struct fuse_conn *fc);
+void fuse_wait_aborted(struct fuse_conn *fc);
 
 /**
  * Invalidate inode attributes
@@ -908,6 +900,8 @@ void fuse_ctl_remove_conn(struct fuse_conn *fc);
  * Is file type valid?
  */
 int fuse_valid_type(int m);
+
+bool fuse_invalid_attr(struct fuse_attr *attr);
 
 /**
  * Is current process allowed to perform filesystem operation?

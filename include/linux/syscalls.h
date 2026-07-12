@@ -205,6 +205,26 @@ extern struct trace_event_functions exit_syscall_print_funcs;
 	}								\
 	static inline long SYSC##name(__MAP(x,__SC_DECL,__VA_ARGS__))
 
+/*
+ * Called before coming back to user-mode. Returning to user-mode with an
+ * address limit different than USER_DS can allow to overwrite kernel memory.
+ */
+static inline void addr_limit_user_check(void)
+{
+#ifdef TIF_FSCHECK
+	if (!test_thread_flag(TIF_FSCHECK))
+		return;
+#endif
+
+	if (CHECK_DATA_CORRUPTION(!segment_eq(get_fs(), USER_DS),
+				  "Invalid address limit on user-mode return"))
+		force_sig(SIGKILL, current);
+
+#ifdef TIF_FSCHECK
+	clear_thread_flag(TIF_FSCHECK);
+#endif
+}
+
 asmlinkage long sys32_quotactl(unsigned int cmd, const char __user *special,
 			       qid_t id, void __user *addr);
 asmlinkage long sys_time(time_t __user *tloc);
@@ -859,6 +879,7 @@ asmlinkage long sys_open_by_handle_at(int mountdirfd,
 				      struct file_handle __user *handle,
 				      int flags);
 asmlinkage long sys_setns(int fd, int nstype);
+asmlinkage long sys_pidfd_open(pid_t pid, unsigned int flags);
 asmlinkage long sys_process_vm_readv(pid_t pid,
 				     const struct iovec __user *lvec,
 				     unsigned long liovcnt,
@@ -888,5 +909,9 @@ asmlinkage long sys_execveat(int dfd, const char __user *filename,
 asmlinkage long sys_membarrier(int cmd, int flags);
 
 asmlinkage long sys_mlock2(unsigned long start, size_t len, int flags);
+
+asmlinkage long sys_pidfd_send_signal(int pidfd, int sig,
+				       siginfo_t __user *info,
+				       unsigned int flags);
 
 #endif

@@ -592,7 +592,7 @@ struct qpnp_led_data {
 	struct rgb_config_data		*rgb_cfg;
 	struct mpp_config_data		*mpp_cfg;
 	struct gpio_config_data		*gpio_cfg;
-	struct rgb_sync		*rgb_sync;
+	struct rgb_sync			*rgb_sync;
 	int				max_current;
 	bool				default_on;
 	bool				in_order_command_processing;

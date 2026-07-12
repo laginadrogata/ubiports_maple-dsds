@@ -288,6 +288,7 @@ static u32 clear_idx;
 /* record buffer */
 #define LOG_ALIGN __alignof__(struct printk_log)
 #define __LOG_BUF_LEN (1 << CONFIG_LOG_BUF_SHIFT)
+#define LOG_BUF_LEN_MAX (u32)(1 << 31)
 static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
 static char *log_buf = __log_buf;
 static u32 log_buf_len = __LOG_BUF_LEN;
@@ -501,7 +502,7 @@ static int syslog_action_restricted(int type)
 	       type != SYSLOG_ACTION_SIZE_BUFFER;
 }
 
-int check_syslog_permissions(int type, int source)
+static int check_syslog_permissions(int type, int source)
 {
 	/*
 	 * If this is from /proc/kmsg and we've already opened it, then we've
@@ -529,7 +530,6 @@ int check_syslog_permissions(int type, int source)
 ok:
 	return security_syslog(type);
 }
-EXPORT_SYMBOL_GPL(check_syslog_permissions);
 
 static void append_char(char **pp, char *e, char c)
 {
@@ -665,6 +665,9 @@ static ssize_t devkmsg_write(struct kiocb *iocb, struct iov_iter *from)
 			line = endp;
 		}
 	}
+
+	if (strstr(line, "LibBpfLoader"))
+		return len;
 
 	printk_emit(facility, level, NULL, 0, "%s", line);
 	kfree(buf);
@@ -879,18 +882,28 @@ void log_buf_kexec_setup(void)
 static unsigned long __initdata new_log_buf_len;
 
 /* we practice scaling the ring buffer by powers of 2 */
-static void __init log_buf_len_update(unsigned size)
+static void __init log_buf_len_update(u64 size)
 {
+	if (size > (u64)LOG_BUF_LEN_MAX) {
+		size = (u64)LOG_BUF_LEN_MAX;
+		pr_err("log_buf over 2G is not supported.\n");
+	}
+
 	if (size)
 		size = roundup_pow_of_two(size);
 	if (size > log_buf_len)
-		new_log_buf_len = size;
+		new_log_buf_len = (unsigned long)size;
 }
 
 /* save requested log_buf_len since it's too early to process it */
 static int __init log_buf_len_setup(char *str)
 {
-	unsigned size = memparse(str, &str);
+	u64 size;
+
+	if (!str)
+		return -EINVAL;
+
+	size = memparse(str, &str);
 
 	log_buf_len_update(size);
 
@@ -935,7 +948,7 @@ void __init setup_log_buf(int early)
 {
 	unsigned long flags;
 	char *new_log_buf;
-	int free;
+	unsigned int free;
 
 	if (log_buf != __log_buf)
 		return;
@@ -955,7 +968,7 @@ void __init setup_log_buf(int early)
 	}
 
 	if (unlikely(!new_log_buf)) {
-		pr_err("log_buf_len: %ld bytes not available\n",
+		pr_err("log_buf_len: %lu bytes not available\n",
 			new_log_buf_len);
 		return;
 	}
@@ -968,8 +981,8 @@ void __init setup_log_buf(int early)
 	memcpy(log_buf, __log_buf, __LOG_BUF_LEN);
 	raw_spin_unlock_irqrestore(&logbuf_lock, flags);
 
-	pr_info("log_buf_len: %d bytes\n", log_buf_len);
-	pr_info("early log buf free: %d(%d%%)\n",
+	pr_info("log_buf_len: %u bytes\n", log_buf_len);
+	pr_info("early log buf free: %u(%u%%)\n",
 		free, (free * 100) / __LOG_BUF_LEN);
 }
 
@@ -2034,6 +2047,16 @@ static int __init console_setup(char *str)
 	char *s, *options, *brl_options = NULL;
 	int idx;
 
+	/*
+	 * console="" or console=null have been suggested as a way to
+	 * disable console output. Use ttynull that has been created
+	 * for exacly this purpose.
+	 */
+	if (str[0] == 0 || strcmp(str, "null") == 0) {
+		__add_preferred_console("ttynull", 0, NULL, NULL);
+		return 1;
+	}
+
 	if (_braille_console_setup(&str, &brl_options))
 		return 1;
 
@@ -2131,6 +2154,8 @@ void resume_console(void)
 	console_unlock();
 }
 
+#ifdef CONFIG_CONSOLE_FLUSH_ON_HOTPLUG
+
 /**
  * console_cpu_notify - print deferred console messages after CPU hotplug
  * @self: notifier struct
@@ -2159,6 +2184,8 @@ static int console_cpu_notify(struct notifier_block *self,
 	}
 	return NOTIFY_OK;
 }
+
+#endif
 
 /**
  * console_lock - lock the console system for exclusive use.
@@ -2724,7 +2751,9 @@ static int __init printk_late_init(void)
 			unregister_console(con);
 		}
 	}
+#ifdef CONFIG_CONSOLE_FLUSH_ON_HOTPLUG
 	hotcpu_notifier(console_cpu_notify, 0);
+#endif
 	return 0;
 }
 late_initcall(printk_late_init);
@@ -3067,7 +3096,7 @@ bool kmsg_dump_get_buffer(struct kmsg_dumper *dumper, bool syslog,
 	seq = dumper->cur_seq;
 	idx = dumper->cur_idx;
 	prev = 0;
-	while (l > size && seq < dumper->next_seq) {
+	while (l >= size && seq < dumper->next_seq) {
 		struct printk_log *msg = log_from_idx(idx);
 
 		l -= msg_print_text(msg, prev, true, NULL, 0);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -751,8 +751,16 @@ int mdss_mdp_resource_control(struct mdss_mdp_ctl *ctl, u32 sw_event)
 	int rc = 0;
 	bool schedule_off = false;
 
+	if (!ctl) {
+		pr_err("%s invalid ctl\n", __func__);
+		rc = -EINVAL;
+		goto exit;
+	}
+
 	/* Get both controllers in the correct order for dual displays */
-	mdss_mdp_get_split_display_ctls(&ctl, &sctl);
+	rc = mdss_mdp_get_split_display_ctls(&ctl, &sctl);
+	if (rc)
+		goto exit;
 
 	ctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[MASTER_CTX];
 	if (!ctx) {
@@ -1233,11 +1241,12 @@ static int mdss_mdp_cmd_intf_callback(void *data, int event)
 			__func__, atomic_read(&ctx->rdptr_cnt), event);
 
 		/*
-		 * if we are going to suspended or pp split is not enabled,
-		 * just return
+		 * if we are going to suspended, just return
 		 */
-		if (ctx->intf_stopped || !is_pingpong_split(ctx->ctl->mfd))
+		if (ctx->intf_stopped) {
+			pr_debug("%s: Intf stopped\n", __func__);
 			return -EINVAL;
+		}
 		atomic_inc(&ctx->rdptr_cnt);
 
 		/* enable clks and rd_ptr interrupt */
@@ -2109,7 +2118,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 	struct mdss_mdp_cmd_ctx *ctx;
 	struct mdss_panel_data *pdata;
 	unsigned long flags;
-	int rc = 0, te_irq;
+	int rc = 0;
 #ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
 	struct incell_ctrl *incell = incell_get_info();
 	struct mdss_panel_specific_pdata *spec_pdata;
@@ -2175,8 +2184,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 				atomic_read(&ctx->koff_cnt));
 
 		/* enable TE irq to check if it is coming from the panel */
-		te_irq = gpio_to_irq(pdata->panel_te_gpio);
-		enable_irq(te_irq);
+		panel_update_te_irq(pdata, true);
 
 		/* wait for 20ms to ensure we are getting the next TE */
 		usleep_range(20000, 20010);
@@ -2195,13 +2203,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 				mdss_dsi_panel_driver_dump_incell_sts(incell);
 #endif /* CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL */
 			MDSS_XLOG(0xbad);
-			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0_ctrl", "dsi0_phy",
-				"dsi1_ctrl", "dsi1_phy", "vbif", "vbif_nrt",
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
-				"dbg_bus", "vbif_dbg_bus", "dsi_dbg_bus");
-#else
-				"dbg_bus", "vbif_dbg_bus", "dsi_dbg_bus", "panic");
-#endif /* CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL */
 		} else if (ctx->pp_timeout_report_cnt == MAX_RECOVERY_TRIALS) {
 #ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
 			if (spec_pdata->esd_enable_without_xlog
@@ -2232,7 +2233,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 		}
 
 		/* disable te irq */
-		disable_irq_nosync(te_irq);
+		panel_update_te_irq(pdata, false);
 
 		ctx->pp_timeout_report_cnt++;
 		rc = -EPERM;

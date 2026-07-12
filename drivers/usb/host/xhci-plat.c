@@ -10,11 +10,6 @@
  * modify it under the terms of the GNU General Public License
  * version 2 as published by the Free Software Foundation.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2018 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
@@ -213,7 +208,7 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	pm_runtime_set_autosuspend_delay(&pdev->dev, 1000);
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
-	pm_runtime_get_sync(&pdev->dev);
+	pm_runtime_get_noresume(&pdev->dev);
 
 	if (of_device_is_compatible(pdev->dev.of_node,
 				    "marvell,armada-375-xhci") ||
@@ -298,6 +293,8 @@ put_usb3_hcd:
 	usb_put_hcd(xhci->shared_hcd);
 
 disable_clk:
+	pm_runtime_put_noidle(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 	if (!IS_ERR(clk))
 		clk_disable_unprepare(clk);
 
@@ -313,8 +310,6 @@ static int xhci_plat_remove(struct platform_device *dev)
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 	struct clk *clk = xhci->clk;
 
-	pm_runtime_disable(&dev->dev);
-
 	device_remove_file(&dev->dev, &dev_attr_config_imod);
 	xhci->xhc_state |= XHCI_STATE_REMOVING;
 	usb_remove_hcd(xhci->shared_hcd);
@@ -326,6 +321,9 @@ static int xhci_plat_remove(struct platform_device *dev)
 	if (!IS_ERR(clk))
 		clk_disable_unprepare(clk);
 	usb_put_hcd(hcd);
+
+	pm_runtime_set_suspended(&dev->dev);
+	pm_runtime_disable(&dev->dev);
 
 	return 0;
 }
@@ -475,6 +473,7 @@ MODULE_DEVICE_TABLE(acpi, usb_xhci_acpi_match);
 static struct platform_driver usb_xhci_driver = {
 	.probe	= xhci_plat_probe,
 	.remove	= xhci_plat_remove,
+	.shutdown = usb_hcd_platform_shutdown,
 	.driver	= {
 		.name = "xhci-hcd",
 		.pm = DEV_PM_OPS,

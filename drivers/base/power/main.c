@@ -16,11 +16,6 @@
  * domain dependencies may differ from the ancestral dependencies that the
  * subsystem list maintains.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2014 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #include <linux/device.h>
 #include <linux/kallsyms.h>
@@ -39,10 +34,6 @@
 #include <linux/cpuidle.h>
 #include <linux/timer.h>
 #include <linux/wakeup_reason.h>
-#ifdef CONFIG_PM_WAKEUP_TIMES
-#include <linux/math64.h>
-#include <linux/wait.h>
-#endif
 
 #include "../base.h"
 #include "power.h"
@@ -66,11 +57,6 @@ static LIST_HEAD(dpm_late_early_list);
 static LIST_HEAD(dpm_noirq_list);
 
 struct suspend_stats suspend_stats;
-#ifdef CONFIG_PM_WAKEUP_TIMES
-struct suspend_stats_queue suspend_stats_queue;
-static ktime_t suspend_start_time;
-static ktime_t resume_start_time;
-#endif
 static DEFINE_MUTEX(dpm_list_mtx);
 static pm_message_t pm_transition;
 
@@ -389,100 +375,6 @@ static void dpm_show_time(ktime_t starttime, pm_message_t state, char *info)
 		info ?: "", info ? " " : "", pm_verb(state.event),
 		usecs / USEC_PER_MSEC, usecs % USEC_PER_MSEC);
 }
-
-#ifdef CONFIG_PM_WAKEUP_TIMES
-void dpm_log_start_time(pm_message_t state)
-{
-	switch (state.event) {
-	case PM_EVENT_RESUME:
-		resume_start_time = ktime_get_boottime();
-		break;
-	case PM_EVENT_SUSPEND:
-		suspend_start_time = ktime_get_boottime();
-		break;
-	default:
-		break;
-	}
-}
-EXPORT_SYMBOL_GPL(dpm_log_start_time);
-
-void dpm_log_wakeup_stats(pm_message_t state)
-{
-	ktime_t *start_time, *avg_time, end_time, duration, prev_duration, sum;
-	struct stats_wakeup_time *min_time, *max_time, *last_time, prev;
-	u64 avg_ns;
-	char buf[32] = {0};
-	unsigned int nr = 0;
-
-	switch (state.event) {
-	case PM_EVENT_RESUME:
-		snprintf(buf, sizeof(buf), "%s", "resume time:");
-		start_time = &resume_start_time;
-		min_time = &suspend_stats.resume_min_time;
-		max_time = &suspend_stats.resume_max_time;
-		last_time = &suspend_stats.resume_last_time;
-		avg_time = &suspend_stats.resume_avg_time;
-		break;
-	case PM_EVENT_SUSPEND:
-		snprintf(buf, sizeof(buf), "%s", "suspend time:");
-		start_time = &suspend_start_time;
-		min_time = &suspend_stats.suspend_min_time;
-		max_time = &suspend_stats.suspend_max_time;
-		last_time = &suspend_stats.suspend_last_time;
-		avg_time = &suspend_stats.suspend_avg_time;
-		break;
-	default:
-		return;
-	}
-
-	if (!ktime_to_ns(*start_time))
-		return;
-
-	/* Calculate duration and update last time */
-	end_time = ktime_get_boottime();
-	prev = *last_time;
-	prev_duration = ktime_sub(prev.end, prev.start);
-	last_time->end = end_time;
-	last_time->start = *start_time;
-	duration = ktime_sub(end_time, *start_time);
-
-	/* Update max time */
-	if (ktime_compare(duration,
-		ktime_sub(max_time->end, max_time->start)) > 0)
-		*max_time = *last_time;
-
-	/* Update min time */
-	if (!ktime_to_ns(ktime_sub(min_time->end, min_time->start)))
-		*min_time = *last_time;
-
-	if (ktime_compare(duration,
-		ktime_sub(min_time->end, min_time->start)) < 0)
-		*min_time = *last_time;
-
-	/* Compute the avg of current, previous and previous average times */
-	if (ktime_to_ns(prev_duration))
-		nr++;
-
-	if (ktime_to_ns(*avg_time))
-		nr++;
-
-	sum = ktime_add(ktime_add(*avg_time, prev_duration), duration);
-	avg_ns = div_u64(ktime_to_ns(sum), (nr + 1));
-	*avg_time = ktime_set(0, avg_ns);
-	*start_time = ktime_set(0, 0);
-
-	pr_debug("%s\n%s  %llums\n%s  %llums\n %s  %llums\n%s %llums\n", buf,
-			"  min:",
-			ktime_to_ms(ktime_sub(min_time->end, min_time->start)),
-			"  max:",
-			ktime_to_ms(ktime_sub(max_time->end, max_time->start)),
-			"  last:", ktime_to_ms(duration),
-			"  avg:", ktime_to_ms(*avg_time));
-	suspend_stats_queue.resume_done = 1;
-	wake_up(&suspend_stats_queue.wait_queue);
-}
-EXPORT_SYMBOL_GPL(dpm_log_wakeup_stats);
-#endif
 
 static int dpm_run_callback(pm_callback_t cb, struct device *dev,
 			    pm_message_t state, char *info)
@@ -1166,11 +1058,13 @@ static int __device_suspend_noirq(struct device *dev, pm_message_t state, bool a
 	}
 
 	error = dpm_run_callback(callback, dev, state, info);
-	if (!error)
+	if (!error) {
 		dev->power.is_noirq_suspended = true;
-	else
+	} else {
+		log_suspend_abort_reason("Callback failed on %s in %pF returned %d",
+					 dev_name(dev), callback, error);
 		async_error = error;
-
+	}
 Complete:
 	complete_all(&dev->power.completion);
 	TRACE_SUSPEND(error);
@@ -1313,10 +1207,13 @@ static int __device_suspend_late(struct device *dev, pm_message_t state, bool as
 	}
 
 	error = dpm_run_callback(callback, dev, state, info);
-	if (!error)
+	if (!error) {
 		dev->power.is_late_suspended = true;
-	else
+	} else {
+		log_suspend_abort_reason("Callback failed on %s in %pF returned %d",
+					 dev_name(dev), callback, error);
 		async_error = error;
+	}
 
 Complete:
 	TRACE_SUSPEND(error);
@@ -1459,7 +1356,6 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 	pm_callback_t callback = NULL;
 	char *info = NULL;
 	int error = 0;
-	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
 
 	TRACE_DEVICE(dev);
@@ -1467,28 +1363,36 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 	dpm_wait_for_children(dev, async);
 
-	if (async_error)
+	if (async_error) {
+		dev->power.direct_complete = false;
 		goto Complete;
+	}
 
 	/*
-	 * If a device configured to wake up the system from sleep states
-	 * has been suspended at run time and there's a resume request pending
-	 * for it, this is equivalent to the device signaling wakeup, so the
-	 * system suspend operation should be aborted.
+	 * Wait for possible runtime PM transitions of the device in progress
+	 * to complete and if there's a runtime resume request pending for it,
+	 * resume it before proceeding with invoking the system-wide suspend
+	 * callbacks for it.
+	 *
+	 * If the system-wide suspend callbacks below change the configuration
+	 * of the device, they must disable runtime PM for it or otherwise
+	 * ensure that its runtime-resume callbacks will not be confused by that
+	 * change in case they are invoked going forward.
 	 */
-	if (pm_runtime_barrier(dev) && device_may_wakeup(dev))
-		pm_wakeup_event(dev, 0);
+	pm_runtime_barrier(dev);
 
 	if (pm_wakeup_pending()) {
-		pm_get_active_wakeup_sources(suspend_abort,
-			MAX_SUSPEND_ABORT_LEN);
-		log_suspend_abort_reason(suspend_abort);
+		dev->power.direct_complete = false;
 		async_error = -EBUSY;
 		goto Complete;
 	}
 
 	if (dev->power.syscore)
 		goto Complete;
+
+	/* Avoid direct_complete to let wakeup_path propagate. */
+	if (device_may_wakeup(dev) || dev->power.wakeup_path)
+		dev->power.direct_complete = false;
 
 	if (dev->power.direct_complete) {
 		if (pm_runtime_status_suspended(dev)) {
@@ -1564,6 +1468,9 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 			spin_unlock_irq(&parent->power.lock);
 		}
+	} else {
+		log_suspend_abort_reason("Callback failed on %s in %pF returned %d",
+					 dev_name(dev), callback, error);
 	}
 
 	device_unlock(dev);
@@ -1767,6 +1674,9 @@ int dpm_prepare(pm_message_t state)
 			printk(KERN_INFO "PM: Device %s not prepared "
 				"for power transition: code %d\n",
 				dev_name(dev), error);
+			log_suspend_abort_reason("Device %s not prepared "
+						 "for power transition: code %d",
+						 dev_name(dev), error);
 			put_device(dev);
 			break;
 		}

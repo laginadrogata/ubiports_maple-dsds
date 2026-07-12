@@ -15,11 +15,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2018 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 #ifndef __ASM_UACCESS_H
 #define __ASM_UACCESS_H
 
@@ -77,6 +72,9 @@ extern int fixup_exception(struct pt_regs *regs);
 static inline void set_fs(mm_segment_t fs)
 {
 	current_thread_info()->addr_limit = fs;
+
+	/* On user-mode return, check fs is correct */
+	set_thread_flag(TIF_FSCHECK);
 
 	/*
 	 * Enable/disable UAO so that copy_to_user() etc can access
